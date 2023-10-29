@@ -21,20 +21,40 @@ void TestSetRequestParam(void) {
     assert(res == EcoRes_Ok);
     assert(req->ver == EcoHttpVer_1_1);
 
+    res = EcoHttpReq_SetOpt(req, EcoOpt_Url, "192.168.1.47:8080/api/3/query-status?name=hello&age=18");
+    assert(res == EcoRes_Ok);
+    assert(memcmp(req->chanAddr.addr, (uint8_t [4]){192, 168, 1, 47}, 4) == 0);
+    assert(req->chanAddr.port == 8080);
+    assert(strcmp(req->urlBuf, "/api/3/query-status?name=hello&age=18") == 0);
+    assert(req->urlLen == 37);
+
+    res = EcoHttpReq_SetOpt(req, EcoOpt_Url, "192.168.1.47:8080/");
+    assert(res == EcoRes_Ok);
+    assert(memcmp(req->chanAddr.addr, (uint8_t [4]){192, 168, 1, 47}, 4) == 0);
+    assert(req->chanAddr.port == 8080);
+    assert(strcmp(req->urlBuf, "/") == 0);
+    assert(req->urlLen == 1);
+
     res = EcoHttpReq_SetOpt(req, EcoOpt_Url, "192.168.1.47:8080");
     assert(res == EcoRes_Ok);
     assert(memcmp(req->chanAddr.addr, (uint8_t [4]){192, 168, 1, 47}, 4) == 0);
     assert(req->chanAddr.port == 8080);
+    assert(strcmp(req->urlBuf, "/") == 0);
+    assert(req->urlLen == 1);
 
     res = EcoHttpReq_SetOpt(req, EcoOpt_Url, "192.168.8.224");
     assert(res == EcoRes_Ok);
     assert(memcmp(req->chanAddr.addr, (uint8_t [4]){192, 168, 8, 224}, 4) == 0);
     assert(req->chanAddr.port == 80);
+    assert(strcmp(req->urlBuf, "/") == 0);
+    assert(req->urlLen == 1);
 
     res = EcoHttpReq_SetOpt(req, EcoOpt_Url, "0.0.0.0:0");
     assert(res == EcoRes_Ok);
     assert(memcmp(req->chanAddr.addr, (uint8_t [4]){0, 0, 0, 0}, 4) == 0);
     assert(req->chanAddr.port == 0);
+    assert(strcmp(req->urlBuf, "/") == 0);
+    assert(req->urlLen == 1);
 
     res = EcoHttpReq_SetOpt(req, EcoOpt_Url, "0.d0.0.0:0");
     assert(res == EcoRes_Err);

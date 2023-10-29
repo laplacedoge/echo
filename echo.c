@@ -263,9 +263,14 @@ void EcoHttpReq_Del(EcoHttpReq *req) {
     free(req);
 }
 
+#define ECO_URL_MAX_LEN     (256 - 1)
+#define ECO_URL_BUF_LEN     (ECO_URL_MAX_LEN + 1)
+
 typedef struct _EcoUrlDsc {
     uint8_t addr[4];
     uint16_t port;
+    char urlBuf[ECO_URL_BUF_LEN];
+    size_t urlLen;
 } EcoUrlDsc;
 
 void EcoUrlDsc_Init(EcoUrlDsc *dsc) {
@@ -275,6 +280,9 @@ void EcoUrlDsc_Init(EcoUrlDsc *dsc) {
     dsc->addr[3] = 1;
 
     dsc->port = 80;
+
+    memset(dsc->urlBuf, 0, sizeof(dsc->urlBuf));
+    dsc->urlLen = 0;
 }
 
 EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
@@ -284,13 +292,14 @@ EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
         FsmStat_AddrDot,
         FsmStat_AddrPortColon,
         FsmStat_PortDigit,
+        FsmStat_UrlChar,
     } fsmStat = FsmStat_Start;
 
     const char *urlBuf = url;
     size_t urlLen = strlen(url);
-    uint8_t addrBuf[4];
+    // uint8_t addrBuf[4];
     size_t addrIdx = 0;
-    uint16_t port;
+    // uint16_t port;
 
     EcoUrlDsc_Init(dsc);
 
@@ -301,7 +310,7 @@ EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
         case FsmStat_Start:
             if (ch >= '0' &&
                 ch <= '9') {
-                addrBuf[0] = ch - '0';
+                dsc->addr[0] = ch - '0';
                 addrIdx = 0;
 
                 fsmStat = FsmStat_AddrDigit;
@@ -314,8 +323,8 @@ EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
         case FsmStat_AddrDigit:
             if (ch >= '0' &&
                 ch <= '9') {
-                addrBuf[addrIdx] *= 10;
-                addrBuf[addrIdx] += ch - '0';
+                dsc->addr[addrIdx] *= 10;
+                dsc->addr[addrIdx] += ch - '0';
 
                 break;
             }
@@ -339,7 +348,7 @@ EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
         case FsmStat_AddrDot:
             if (ch >= '0' &&
                 ch <= '9') {
-                addrBuf[addrIdx] = ch - '0';
+                dsc->addr[addrIdx] = ch - '0';
 
                 fsmStat = FsmStat_AddrDigit;
 
@@ -351,7 +360,7 @@ EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
         case FsmStat_AddrPortColon:
             if (ch >= '0' &&
                 ch <= '9') {
-                port = ch - '0';
+                dsc->port = ch - '0';
 
                 fsmStat = FsmStat_PortDigit;
 
@@ -363,8 +372,43 @@ EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
         case FsmStat_PortDigit:
             if (ch >= '0' &&
                 ch <= '9') {
-                port *= 10;
-                port += ch - '0';
+                dsc->port *= 10;
+                dsc->port += ch - '0';
+
+                break;
+            }
+
+            if (ch == '/') {
+                dsc->urlBuf[0] = ch;
+                dsc->urlLen = 1;
+
+                fsmStat = FsmStat_UrlChar;
+
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_UrlChar:
+            if ((ch >= '0' && ch <= '9') ||
+                (ch >= 'a' && ch <= 'z') ||
+                (ch >= 'A' && ch <= 'Z') ||
+                ch == '-' ||
+                ch == '_' ||
+                ch == '.' ||
+                ch == '~' ||
+
+                ch == '/' ||
+                ch == '?' ||
+                ch == '#' ||
+                ch == '&' ||
+                ch == '=') {
+                if (dsc->urlLen == ECO_URL_MAX_LEN) {
+                    return EcoRes_TooBig;
+                }
+
+                dsc->urlBuf[dsc->urlLen] = ch;
+                dsc->urlLen++;
 
                 break;
             }
@@ -378,10 +422,16 @@ EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
             return EcoRes_Err;
         }
 
-        memcpy(dsc->addr, addrBuf, sizeof(addrBuf));
+        dsc->port = 80;
+        dsc->urlBuf[0] = '/';
+        dsc->urlBuf[1] = '\0';
+        dsc->urlLen = 1;
     } else if (fsmStat == FsmStat_PortDigit) {
-        memcpy(dsc->addr, addrBuf, sizeof(addrBuf));
-        dsc->port = port;
+        dsc->urlBuf[0] = '/';
+        dsc->urlBuf[1] = '\0';
+        dsc->urlLen = 1;
+    } else if (fsmStat == FsmStat_UrlChar) {
+        dsc->urlBuf[dsc->urlLen] = '\0';
     } else {
         return EcoRes_Err;
     }
@@ -402,6 +452,19 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
 
         memcpy(req->chanAddr.addr, urlDsc.addr, 4);
         req->chanAddr.port = urlDsc.port;
+
+        /* Set new URL. */
+        if (req->urlBuf != NULL) {
+            free(req->urlBuf);
+        }
+
+        req->urlBuf = (char *)malloc(urlDsc.urlLen + 1);
+        if (req->urlBuf == NULL) {
+            return EcoRes_NoMem;
+        }
+
+        memcpy(req->urlBuf, urlDsc.urlBuf, urlDsc.urlLen + 1);
+        req->urlLen = urlDsc.urlLen;
 
         break;
     }

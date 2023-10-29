@@ -20,6 +20,10 @@ typedef enum _EcoRes {
     EcoRes_BadHttpVer       = -8,
 
     EcoRes_BadStatCode      = -9,
+
+    EcoRes_TooSmall         = -10,
+
+    EcoRes_TooBig           = -11,
 } EcoRes;
 
 typedef enum _EcoHttpVer {
