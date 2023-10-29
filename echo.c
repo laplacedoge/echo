@@ -204,3 +204,236 @@ EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp **kvp) {
 
     return EcoRes_NotFound;
 }
+
+void EcoHttpReq_Init(EcoHttpReq *req) {
+    req->meth = ECO_DEF_HTTP_METH;
+    req->urlBuf = NULL;
+    req->urlLen = 0;
+    memcpy(&req->chanAddr, ECO_DEF_CHAN_ADDR, sizeof(req->chanAddr));
+    req->ver = ECO_DEF_HTTP_VER;
+    req->hdrTab = NULL;
+    req->bodyBuf = NULL;
+    req->bodyLen = 0;
+}
+
+EcoHttpReq *EcoHttpReq_New(void) {
+    EcoHttpReq *newReq;
+
+    newReq = (EcoHttpReq *)malloc(sizeof(EcoHttpReq));
+    if (newReq == NULL) {
+        return NULL;
+    }
+
+    EcoHttpReq_Init(newReq);
+
+    return newReq;
+}
+
+void EcoHttpReq_Deinit(EcoHttpReq *req) {
+    req->meth = ECO_DEF_HTTP_METH;
+
+    if (req->urlBuf != NULL) {
+        free(req->urlBuf);
+        req->urlBuf = NULL;
+    }
+
+    req->urlLen = 0;
+
+    memcpy(&req->chanAddr, ECO_DEF_CHAN_ADDR, sizeof(req->chanAddr));
+
+    req->ver = ECO_DEF_HTTP_VER;
+
+    if (req->hdrTab != NULL) {
+        EcoHdrTab_Del(req->hdrTab);
+        req->hdrTab = NULL;
+    }
+
+    if (req->bodyBuf != NULL) {
+        free(req->bodyBuf);
+        req->bodyBuf = NULL;
+    }
+
+    req->bodyLen = 0;
+}
+
+void EcoHttpReq_Del(EcoHttpReq *req) {
+    EcoHttpReq_Deinit(req);
+
+    free(req);
+}
+
+typedef struct _EcoUrlDsc {
+    uint8_t addr[4];
+    uint16_t port;
+} EcoUrlDsc;
+
+void EcoUrlDsc_Init(EcoUrlDsc *dsc) {
+    dsc->addr[0] = 127;
+    dsc->addr[1] = 0;
+    dsc->addr[2] = 0;
+    dsc->addr[3] = 1;
+
+    dsc->port = 80;
+}
+
+EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
+    enum _FsmStat {
+        FsmStat_Start,
+        FsmStat_AddrDigit,
+        FsmStat_AddrDot,
+        FsmStat_AddrPortColon,
+        FsmStat_PortDigit,
+    } fsmStat = FsmStat_Start;
+
+    const char *urlBuf = url;
+    size_t urlLen = strlen(url);
+    uint8_t addrBuf[4];
+    size_t addrIdx = 0;
+    uint16_t port;
+
+    EcoUrlDsc_Init(dsc);
+
+    for (size_t i = 0; i < urlLen; i++) {
+        char ch = urlBuf[i];
+
+        switch (fsmStat) {
+        case FsmStat_Start:
+            if (ch >= '0' &&
+                ch <= '9') {
+                addrBuf[0] = ch - '0';
+                addrIdx = 0;
+
+                fsmStat = FsmStat_AddrDigit;
+
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_AddrDigit:
+            if (ch >= '0' &&
+                ch <= '9') {
+                addrBuf[addrIdx] *= 10;
+                addrBuf[addrIdx] += ch - '0';
+
+                break;
+            }
+
+            if (ch == '.') {
+                addrIdx++;
+
+                fsmStat = FsmStat_AddrDot;
+
+                break;
+            }
+
+            if (ch == ':') {
+                fsmStat = FsmStat_AddrPortColon;
+
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_AddrDot:
+            if (ch >= '0' &&
+                ch <= '9') {
+                addrBuf[addrIdx] = ch - '0';
+
+                fsmStat = FsmStat_AddrDigit;
+
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_AddrPortColon:
+            if (ch >= '0' &&
+                ch <= '9') {
+                port = ch - '0';
+
+                fsmStat = FsmStat_PortDigit;
+
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_PortDigit:
+            if (ch >= '0' &&
+                ch <= '9') {
+                port *= 10;
+                port += ch - '0';
+
+                break;
+            }
+
+            return EcoRes_Err;
+        }
+    }
+
+    if (fsmStat == FsmStat_AddrDigit) {
+        if (addrIdx != 3) {
+            return EcoRes_Err;
+        }
+
+        memcpy(dsc->addr, addrBuf, sizeof(addrBuf));
+    } else if (fsmStat == FsmStat_PortDigit) {
+        memcpy(dsc->addr, addrBuf, sizeof(addrBuf));
+        dsc->port = port;
+    } else {
+        return EcoRes_Err;
+    }
+
+    return EcoRes_Ok;
+}
+
+EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
+    switch (opt) {
+    case EcoOpt_Url: {
+        EcoUrlDsc urlDsc;
+        EcoRes res;
+
+        res = EcoUrlDsc_Parse(&urlDsc, (char *)arg);
+        if (res != EcoRes_Ok) {
+            return res;
+        }
+
+        memcpy(req->chanAddr.addr, urlDsc.addr, 4);
+        req->chanAddr.port = urlDsc.port;
+
+        break;
+    }
+
+    case EcoOpt_Method:
+        req->meth = (EcoHttpMeth)arg;
+        break;
+
+    case EcoOpt_Verion:
+        req->ver = (EcoHttpVer)arg;
+        break;
+
+    case EcoOpt_Headers:
+        if (req->hdrTab != NULL) {
+            EcoHdrTab_Del(req->hdrTab);
+        }
+        req->hdrTab = (EcoHdrTab *)arg;
+        break;
+
+    case EcoOpt_BodyBuf:
+        if (req->bodyBuf != NULL) {
+            free(req->bodyBuf);
+        }
+        req->bodyBuf = (uint8_t *)arg;
+        break;
+
+    case EcoOpt_BodyLen:
+        req->bodyLen = (size_t)arg;
+        break;
+
+    default:
+        return EcoRes_BadOpt;
+    }
+
+    return EcoRes_Ok;
+}

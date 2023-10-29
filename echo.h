@@ -20,17 +20,21 @@ typedef enum _EcoHttpVer {
     EcoHttpVer_1_1,
 } EcoHttpVer;
 
-typedef enum _EcoHttpMethod {
-    EcoHttpMethod_Get,
-    EcoHttpMethod_Post,
-    EcoHttpMethod_Head,
-} EcoHttpMethod;
+#define ECO_DEF_HTTP_VER    EcoHttpVer_1_1
+
+typedef enum _EcoHttpMeth {
+    EcoHttpMeth_Get,
+    EcoHttpMeth_Post,
+    EcoHttpMeth_Head,
+} EcoHttpMeth;
+
+#define ECO_DEF_HTTP_METH   EcoHttpMeth_Get
 
 typedef enum _EcoOpt {
     EcoOpt_Url,
     EcoOpt_Method,
     EcoOpt_Verion,
-    EcoOpt_Header,
+    EcoOpt_Headers,
     EcoOpt_BodyBuf,
     EcoOpt_BodyLen,
 
@@ -122,9 +126,33 @@ EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp **kvp);
 
 
 
+typedef struct _EcoChanAddr {
+    uint8_t addr[4];
+    uint16_t port;
+} EcoChanAddr;
+
+#define ECO_DEF_CHAN_ADDR   (&(EcoChanAddr){{ 127, 0, 0, 1 }, 80})
+
 typedef struct _EcoHttpReq {
-    uint32_t placeholder;
+    EcoHttpMeth meth;
+    char *urlBuf;
+    size_t urlLen;
+    EcoChanAddr chanAddr;
+    EcoHttpVer ver;
+    EcoHdrTab *hdrTab;
+    uint8_t *bodyBuf;
+    size_t bodyLen;
 } EcoHttpReq;
+
+void EcoHttpReq_Init(EcoHttpReq *req);
+
+EcoHttpReq *EcoHttpReq_New(void);
+
+void EcoHttpReq_Deinit(EcoHttpReq *req);
+
+void EcoHttpReq_Del(EcoHttpReq *req);
+
+EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg);
 
 
 
@@ -137,13 +165,6 @@ typedef struct _EcoHttpRsp {
 typedef struct _EcoHttpCli {
     uint32_t placeholder;
 } EcoHttpCli;
-
-
-
-typedef struct _EcoChanAddr {
-    uint8_t addr[4];
-    uint16_t port;
-} EcoChanAddr;
 
 
 
@@ -203,14 +224,6 @@ typedef int (*EcoChanWriteHook)(const void *buf, int len, EcoArg arg);
  *         Negative numbers represent corresponding errors.
  */
 typedef int (*EcoBodyWriteHook)(int off, const void *buf, int len, EcoArg arg);
-
-
-
-EcoHttpReq *EcoHttpReq_New(void);
-
-void EcoHttpReq_Del(EcoHttpReq *req);
-
-EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg);
 
 
 

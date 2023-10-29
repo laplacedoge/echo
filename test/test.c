@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
 
     res = EcoHttpReq_SetOpt(req, EcoOpt_Verion, (EcoArg)EcoHttpVer_1_1);
 
-    res = EcoHttpReq_SetOpt(req, EcoOpt_Method, (EcoArg)EcoHttpMethod_Post);
+    res = EcoHttpReq_SetOpt(req, EcoOpt_Method, (EcoArg)EcoHttpMeth_Post);
 
     /* Create HTTP header table. */
     tab = EcoHdrTab_New();
@@ -149,7 +149,7 @@ int main(int argc, char *argv[]) {
     res = EcoHdrTab_Add(tab, "Accept-Encoding", "gzip");
 
     /* Set HTTP header field of HTTP request. */
-    res = EcoHttpReq_SetOpt(req, EcoOpt_Header, (EcoArg)tab);
+    res = EcoHttpReq_SetOpt(req, EcoOpt_Headers, (EcoArg)tab);
 
     /* Set POST body field. */
     res = EcoHttpReq_SetOpt(req, EcoOpt_BodyBuf, (EcoArg)&bodyBuf);
