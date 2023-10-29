@@ -48,21 +48,21 @@ int ecoChanReadHook(void *buf, int len, void *arg) {
 }
 
 int ecoChanWriteHook(const void *buf, int len, void *arg) {
-    int fileFd;
-    int ret;
+    printf("Transfer: `");
 
-    fileFd = *(int *)arg;
+    for (int i = 0; i < len; i++) {
+        uint8_t byte = ((uint8_t *)buf)[i];
 
-    ret = (int)write(fileFd, buf, (size_t)len);
-    if (ret <= 0) {
-        if (ret == 0) {
-            return EcoRes_ReachEnd;
+        if (byte >= 0x20 && byte <= 0x7E) {
+            putc(byte, stdout);
+        } else {
+            printf("\\x%02X", byte);
         }
-
-        return EcoRes_Err;
     }
 
-    return ret;
+    printf("`\r\n");
+
+    return len;
 }
 
 EcoRes ecoChanCloseHook(void *arg) {
@@ -119,7 +119,7 @@ int main(int argc, char *argv[]) {
     req = EcoHttpReq_New();
     assert(req != NULL);
 
-    res = EcoHttpReq_SetOpt(req, EcoOpt_Url, "192.168.8.72:8080");
+    res = EcoHttpReq_SetOpt(req, EcoOpt_Url, "192.168.8.72:8080/api/3/query-status?name=hello&age=18");
     assert(res == EcoRes_Ok);
     assert(memcmp(req->chanAddr.addr, (uint8_t [4]){192, 168, 8, 72}, 4) == 0);
     assert(req->chanAddr.port == 8080);

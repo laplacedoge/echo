@@ -1,11 +1,32 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
 
 #include "echo.h"
+
+
+
+const char *EcoHttpVer_ToStr(EcoHttpVer ver) {
+    switch (ver) {
+    case EcoHttpVer_0_9: return "0.9";
+    case EcoHttpVer_1_0: return "1.0";
+    case EcoHttpVer_1_1: return "1.1";
+    default: return "1.1";
+    }
+}
+
+const char *EcoHttpMeth_ToStr(EcoHttpMeth meth) {
+    switch (meth) {
+    case EcoHttpMeth_Get: return "GET";
+    case EcoHttpMeth_Post: return "POST";
+    case EcoHttpMeth_Head: return "HEAD";
+    default: return "GET";
+    }
+}
 
 
 
@@ -642,6 +663,68 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
 
     default:
         return EcoRes_BadOpt;
+    }
+
+    return EcoRes_Ok;
+}
+
+EcoRes EcoCli_SendReqMsg(EcoHttpCli *cli) {
+    char *startLineBuf[512];
+    int wrLen;
+    int ret;
+
+    /* Send start line. */
+    ret = snprintf((char *)startLineBuf, sizeof(startLineBuf),
+        "%s %s HTTP/%s\r\n",
+        EcoHttpMeth_ToStr(cli->req->meth),
+        cli->req->urlBuf,
+        EcoHttpVer_ToStr(cli->req->ver));
+    if (ret >= sizeof(startLineBuf)) {
+        return EcoRes_TooBig;
+    }
+
+    wrLen = cli->chanWriteHook(startLineBuf, ret, cli->chanHookArg);
+    if (wrLen != ret) {
+        return EcoRes_Err;
+    }
+
+    /* Send header lines. */
+    for (size_t i = 0; i < cli->req->hdrTab->kvpNum; i++) {
+        EcoKvp *curKvp = cli->req->hdrTab->kvpAry + i;
+
+        wrLen = cli->chanWriteHook(curKvp->keyBuf, curKvp->keyLen, cli->chanHookArg);
+        if (wrLen != curKvp->keyLen) {
+            return EcoRes_Err;
+        }
+
+        wrLen = cli->chanWriteHook(": ", 2, cli->chanHookArg);
+        if (wrLen != 2) {
+            return EcoRes_Err;
+        }
+
+        wrLen = cli->chanWriteHook(curKvp->valBuf, curKvp->valLen, cli->chanHookArg);
+        if (wrLen != curKvp->valLen) {
+            return EcoRes_Err;
+        }
+
+        wrLen = cli->chanWriteHook("\r\n", 2, cli->chanHookArg);
+        if (wrLen != 2) {
+            return EcoRes_Err;
+        }
+    }
+
+    /* Send empty line. */
+    wrLen = cli->chanWriteHook("\r\n", 2, cli->chanHookArg);
+    if (wrLen != 2) {
+        return EcoRes_Err;
+    }
+
+    /* Send body data. */
+    if (cli->req->bodyBuf != NULL) {
+        wrLen = cli->chanWriteHook(cli->req->bodyBuf, cli->req->bodyLen, cli->chanHookArg);
+        if (wrLen != cli->req->bodyLen) {
+            return EcoRes_Err;
+        }
     }
 
     return EcoRes_Ok;
@@ -1338,7 +1421,11 @@ EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
         return res;
     }
 
-    // TODO: Sent HTTP request.
+    /* Send HTTP request. */
+    res = EcoCli_SendReqMsg(cli);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
 
     res = EcoCli_ParseRspMsg(cli);
     if (res != EcoRes_Ok) {
