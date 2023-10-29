@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdint.h>
 
 typedef enum _EcoRes {
@@ -50,6 +51,7 @@ typedef enum _EcoOpt {
 typedef void * EcoArg;
 
 
+
 typedef enum _EcoChanOpt {
     EcoChanOpt_SyncReadWrite,
     EcoChanOpt_ReadWriteTimeout,
@@ -58,11 +60,17 @@ typedef enum _EcoChanOpt {
 
 
 typedef struct _EcoKvp {
-    uint32_t placeholder;
+    char *keyBuf;
+    char *valBuf;
+    size_t keyLen;
+    size_t valLen;
+    uint32_t keyHash;
 } EcoKvp;
 
 typedef struct _EcoHdrTab {
-    uint32_t placeholder;
+    EcoKvp *kvpAry;
+    size_t kvpCap;
+    size_t kvpNum;
 } EcoHdrTab;
 
 
@@ -75,15 +83,44 @@ void EcoHdrTab_Deinit(EcoHdrTab *tab);
 
 void EcoHdrTab_Del(EcoHdrTab *tab);
 
+/**
+ * @brief Add a key-value pair to the header table.
+ * 
+ * @param tab Header table.
+ * @param key Key string.
+ * @param val Value string.
+ */
 EcoRes EcoHdrTab_Add(EcoHdrTab *tab, const char *key, const char *val);
 
+/**
+ * @brief Drop a key-value pair from the header table.
+ * 
+ * @param tab Header table.
+ * @param key Key string.
+ */
 EcoRes EcoHdrTab_Drop(EcoHdrTab *tab, const char *key);
 
-EcoRes EcoHdrTab_Clear(EcoHdrTab *tab);
+/**
+ * @brief Clear all key-value pairs in the header table.
+ * 
+ * @param tab Header table.
+ */
+void EcoHdrTab_Clear(EcoHdrTab *tab);
 
-EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp *kvp);
+/**
+ * @brief Find a key-value pair in the header table.
+ * 
+ * @note If `kvp` is `NULL`, then the key-value pair will not be returned.
+ * 
+ * @param tab Header table.
+ * @param key Key string.
+ * @param kvp Pointer to the key-value pair.
+ * 
+ * @return `EcoRes_Ok` if found, `EcoRes_NotFound` if not found.
+ */
+EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp **kvp);
 
-EcoRes EcoHdrTab_Alter(EcoHdrTab *tab, const char *key, const char *val);
+
 
 typedef struct _EcoHttpReq {
     uint32_t placeholder;
