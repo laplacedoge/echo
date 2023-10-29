@@ -12,6 +12,10 @@ typedef enum _EcoRes {
     EcoRes_BadOpt           = -4,
 
     EcoRes_ReachEnd         = -5,
+
+    EcoRes_NoChanHook       = -6,
+
+    EcoRes_Again            = -7,
 } EcoRes;
 
 typedef enum _EcoHttpVer {
@@ -158,9 +162,30 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg);
 
 
 
+typedef enum _EcoStatCode {
+    EcoHttpStatCode_Ok                  = 200,
+    EcoHttpStatCode_BadRequest          = 400,
+    EcoHttpStatCode_NotFound            = 404,
+    EcoHttpStatCode_ServerError         = 500,
+} EcoStatCode;
+
+#define ECO_DEF_STAT_CODE   EcoHttpStatCode_Ok
+
 typedef struct _EcoHttpRsp {
-    uint32_t placeholder;
+    EcoHttpVer ver;
+    EcoStatCode statCode;
+    EcoHdrTab *hdrTab;
+    uint8_t *bodyBuf;
+    size_t bodyLen;
 } EcoHttpRsp;
+
+void EcoHttpRsp_Init(EcoHttpRsp *rsp);
+
+EcoHttpRsp *EcoHttpRsp_New(void);
+
+void EcoHttpRsp_Deinit(EcoHttpRsp *rsp);
+
+void EcoHttpRsp_Del(EcoHttpRsp *rsp);
 
 
 
@@ -233,6 +258,7 @@ typedef struct _EcoHttpCli {
     EcoArg bodyHookArg;
     EcoBodyWriteHook bodyWriteHook;
     EcoHttpReq *req;
+    EcoHttpRsp *rsp;
 } EcoHttpCli;
 
 void EcoHttpCli_Init(EcoHttpCli *cli);

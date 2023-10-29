@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -438,6 +439,50 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
     return EcoRes_Ok;
 }
 
+void EcoHttpRsp_Init(EcoHttpRsp *rsp) {
+    rsp->ver = ECO_DEF_HTTP_VER;
+    rsp->statCode = ECO_DEF_STAT_CODE;
+    rsp->hdrTab = NULL;
+    rsp->bodyBuf = NULL;
+    rsp->bodyLen = 0;
+}
+
+EcoHttpRsp *EcoHttpRsp_New(void) {
+    EcoHttpRsp *newRsp;
+
+    newRsp = (EcoHttpRsp *)malloc(sizeof(EcoHttpRsp));
+    if (newRsp == NULL) {
+        return NULL;
+    }
+
+    EcoHttpRsp_Init(newRsp);
+
+    return newRsp;
+}
+
+void EcoHttpRsp_Deinit(EcoHttpRsp *rsp) {
+    rsp->ver = ECO_DEF_HTTP_VER;
+    rsp->statCode = ECO_DEF_STAT_CODE;
+
+    if (rsp->hdrTab != NULL) {
+        EcoHdrTab_Del(rsp->hdrTab);
+        rsp->hdrTab = NULL;
+    }
+
+    if (rsp->bodyBuf != NULL) {
+        free(rsp->bodyBuf);
+        rsp->bodyBuf = NULL;
+    }
+
+    rsp->bodyLen = 0;
+}
+
+void EcoHttpRsp_Del(EcoHttpRsp *rsp) {
+    EcoHttpRsp_Deinit(rsp);
+
+    free(rsp);
+}
+
 void EcoHttpCli_Init(EcoHttpCli *cli) {
     cli->chanHookArg = NULL;
     cli->chanOpenHook = NULL;
@@ -448,6 +493,7 @@ void EcoHttpCli_Init(EcoHttpCli *cli) {
     cli->bodyHookArg = NULL;
     cli->bodyWriteHook = NULL;
     cli->req = NULL;
+    cli->rsp = NULL;
 }
 
 EcoHttpCli *EcoHttpCli_New(void) {
@@ -476,6 +522,11 @@ void EcoHttpCli_Deinit(EcoHttpCli *cli) {
     if (cli->req != NULL) {
         EcoHttpReq_Del(cli->req);
         cli->req = NULL;
+    }
+
+    if (cli->rsp != NULL) {
+        EcoHttpRsp_Del(cli->rsp);
+        cli->rsp = NULL;
     }
 }
 
@@ -533,4 +584,660 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
     return EcoRes_Ok;
 }
 
-EcoRes EcoHttpCli_Issue(EcoHttpCli *cli);
+#define ECO_RF_MAX_LEN          (32 - 1)
+#define ECO_RF_BUF_LEN          (ECO_RF_MAX_LEN + 1)
+
+#define ECO_HDR_KEY_MAX_LEN     (128 - 1)
+#define ECO_HDR_KEY_BUF_LEN     (ECO_HDR_KEY_MAX_LEN + 1)
+
+#define ECO_HDR_VAL_MAX_LEN     (1024 - 1)
+#define ECO_HDR_VAL_BUF_LEN     (ECO_HDR_VAL_MAX_LEN + 1)
+
+typedef struct _ParseCache {
+    uint32_t rspMsgFsmStat;
+
+    uint32_t statLineFsmStat;
+    uint32_t verMajor;
+    uint32_t verMinor;
+    uint32_t statCode;
+    char rfBuf[ECO_RF_BUF_LEN];
+    size_t rfLen;
+
+    uint32_t hdrLineFsmStat;
+    char keyBuf[ECO_HDR_KEY_BUF_LEN];
+    char valBuf[ECO_HDR_VAL_BUF_LEN];
+    size_t keyLen;
+    size_t valLen;
+
+    uint32_t contLen;
+
+    uint32_t empLineFsmStat;
+
+    uint32_t bodyOff;
+    uint32_t bodyLen;
+} ParseCache;
+
+void ParseCache_Init(ParseCache *cache) {
+    cache->rspMsgFsmStat = 0;
+
+    cache->statLineFsmStat = 0;
+    cache->verMajor = 0;
+    cache->verMinor = 0;
+    cache->statCode = 0;
+    memset(cache->rfBuf, 0, sizeof(cache->rfBuf));
+    cache->rfLen = 0;
+
+    cache->hdrLineFsmStat = 0;
+    memset(cache->keyBuf, 0, sizeof(cache->keyBuf));
+    memset(cache->valBuf, 0, sizeof(cache->valBuf));
+    cache->keyLen = 0;
+    cache->valLen = 0;
+
+    cache->contLen = 0;
+
+    cache->empLineFsmStat = 0;
+
+    cache->bodyOff = 0;
+    cache->bodyLen = 0;
+}
+
+void ParseCache_Deinit(ParseCache *cache) {
+    ParseCache_Init(cache);
+}
+
+static EcoRes EcoHttp_ParseStatLine(EcoHttpCli *cli, ParseCache *cache, const void *buf, int availLen, int *procLen) {
+    typedef enum _FsmStat {
+        FsmStat_Start = 0,
+
+        FsmStat_ChHGot,
+        FsmStat_ChT1Got,
+        FsmStat_ChT2Got,
+        FsmStat_ChPGot,
+        FsmStat_ChSlashGot,
+        FsmStat_VerMajorGot,
+        FsmStat_ChDotGot,
+        FsmStat_VerMinorGot,
+
+        FsmStat_SpcAfterVerGot,
+
+        FsmStat_StatCodeGot,
+
+        FsmStat_SpcAfterStatCodeGot,
+
+        FsmStat_ReasonPhraseGot,
+
+        FsmStat_TrailingChCrGot,
+        FsmStat_TrailingChLfGot,
+
+        FsmStat_Done = FsmStat_TrailingChLfGot,
+    } FsmStat;
+
+    for (int i = 0; i < availLen; i++) {
+        uint8_t byte = ((uint8_t *)buf)[i];
+
+        switch (cache->statLineFsmStat) {
+        StartParse:
+            cache->statLineFsmStat = FsmStat_Start;
+
+        case FsmStat_Start:
+            if (byte == 'H') {
+                cache->statLineFsmStat = FsmStat_ChHGot;
+                break;
+            }
+
+            break;
+
+        case FsmStat_ChHGot:
+            if (byte == 'T') {
+                cache->statLineFsmStat = FsmStat_ChT1Got;
+                break;
+            }
+
+            goto StartParse;
+
+        case FsmStat_ChT1Got:
+            if (byte == 'T') {
+                cache->statLineFsmStat = FsmStat_ChT2Got;
+                break;
+            }
+
+            goto StartParse;
+
+        case FsmStat_ChT2Got:
+            if (byte == 'P') {
+                cache->statLineFsmStat = FsmStat_ChPGot;
+                break;
+            }
+
+            goto StartParse;
+
+        case FsmStat_ChPGot:
+            if (byte == '/') {
+                cache->statLineFsmStat = FsmStat_ChSlashGot;
+                break;
+            }
+
+            goto StartParse;
+
+        case FsmStat_ChSlashGot:
+            if (byte >= '0' &&
+                byte <= '9') {
+                cache->verMajor = byte - '0';
+
+                cache->statLineFsmStat = FsmStat_VerMajorGot;
+                break;
+            }
+
+            goto StartParse;
+
+        case FsmStat_VerMajorGot:
+            if (byte == '.') {
+                cache->statLineFsmStat = FsmStat_ChDotGot;
+                break;
+            }
+
+            if (byte == ' ') {
+                cache->statLineFsmStat = FsmStat_SpcAfterVerGot;
+                break;
+            }
+
+            goto StartParse;
+
+        case FsmStat_ChDotGot:
+            if (byte >= '0' &&
+                byte <= '9') {
+                cache->verMinor = byte - '0';
+
+                cache->statLineFsmStat = FsmStat_VerMinorGot;
+                break;
+            }
+
+            goto StartParse;
+
+        case FsmStat_VerMinorGot:
+            if (byte == ' ') {
+                cache->statLineFsmStat = FsmStat_SpcAfterVerGot;
+                break;
+            }
+
+            goto StartParse;
+
+        case FsmStat_SpcAfterVerGot:
+            if (byte >= '1' &&
+                byte <= '9') {
+                cache->statCode = byte - '0';
+
+                cache->statLineFsmStat = FsmStat_StatCodeGot;
+                break;
+            }
+
+            goto StartParse;
+
+        case FsmStat_StatCodeGot:
+            if (byte >= '0' &&
+                byte <= '9') {
+                cache->statCode *= 10;
+                cache->statCode += byte - '0';
+
+                break;
+            }
+
+            if (byte == ' ') {
+                cache->statLineFsmStat = FsmStat_SpcAfterStatCodeGot;
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_SpcAfterStatCodeGot:
+            if ((byte >= 'a' && byte <= 'z') ||
+                (byte >= 'A' && byte <= 'Z') ||
+                byte == '-') {
+                cache->rfBuf[0] = byte;
+                cache->rfLen = 1;
+
+                cache->statLineFsmStat = FsmStat_ReasonPhraseGot;
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_ReasonPhraseGot:
+            if ((byte >= 'a' && byte <= 'z') ||
+                (byte >= 'A' && byte <= 'Z') ||
+                byte == ' ' ||
+                byte == '-') {
+                if (cache->rfLen == ECO_RF_MAX_LEN) {
+                    return EcoRes_Err;
+                }
+
+                cache->rfBuf[cache->rfLen] = byte;
+                cache->rfLen++;
+
+                break;
+            }
+
+            if (byte == '\r') {
+                cache->rfBuf[cache->rfLen] = '\0';
+
+                cache->statLineFsmStat = FsmStat_TrailingChCrGot;
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_TrailingChCrGot:
+            if (byte == '\n') {
+                *procLen = i + 1;
+
+                cache->statLineFsmStat = FsmStat_TrailingChLfGot;
+                return EcoRes_Ok;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_TrailingChLfGot:
+            break;
+        }
+    }
+
+    *procLen = availLen;
+
+    return EcoRes_Again;
+}
+
+static const char hdrKeyLcChTab[] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '-', 0, 0,
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 0, 0, 0, 0, 0, 0,
+    0, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o',
+    'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y',  'z', 0, 0, 0, 0, 0,
+    0, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o',
+    'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y',  'z', 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+};
+
+static EcoRes EcoHttp_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const void *buf, int availLen, int *procLen) {
+    typedef enum _FsmStat {
+        FsmStat_Start = 0,
+
+        FsmStat_KeyGot,
+
+        FsmStat_ChColonGot,
+
+        FsmStat_ChSpaceGot,
+
+        FsmStat_ValGot,
+
+        FsmStat_TrailingChCrGot,
+        FsmStat_TrailingChLfGot,
+
+        FsmStat_Done = FsmStat_TrailingChLfGot,
+    } FsmStat;
+
+    for (int i = 0; i < availLen; i++) {
+        uint8_t byte = ((uint8_t *)buf)[i];
+
+        switch (cache->hdrLineFsmStat) {
+        case FsmStat_Start:
+            if ((byte >= 'a' && byte <= 'z') ||
+                (byte >= 'A' && byte <= 'Z') ||
+                byte == '-') {
+                cache->keyBuf[0] = hdrKeyLcChTab[byte];
+                cache->keyLen = 1;
+
+                cache->hdrLineFsmStat = FsmStat_KeyGot;
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_KeyGot:
+            if ((byte >= 'a' && byte <= 'z') ||
+                (byte >= 'A' && byte <= 'Z') ||
+                byte == '-') {
+                if (cache->keyLen == ECO_HDR_KEY_MAX_LEN) {
+                    return EcoRes_Err;
+                }
+
+                cache->keyBuf[cache->keyLen] = hdrKeyLcChTab[byte];
+                cache->keyLen++;
+
+                cache->hdrLineFsmStat = FsmStat_KeyGot;
+                break;
+            }
+
+            if (byte == ':') {
+                cache->keyBuf[cache->keyLen] = '\0';
+
+                cache->hdrLineFsmStat = FsmStat_ChColonGot;
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_ChColonGot:
+            if (byte == ' ') {
+                cache->hdrLineFsmStat = FsmStat_ChSpaceGot;
+                break;
+            }
+
+            if (byte >= 0x21 &&
+                byte <= 0x7E) {
+                cache->valBuf[0] = byte;
+                cache->valLen = 1;
+
+                cache->hdrLineFsmStat = FsmStat_ValGot;
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_ChSpaceGot:
+            if (byte == ' ') {
+                break;
+            }
+
+            if (byte >= 0x21 &&
+                byte <= 0x7E) {
+                cache->valBuf[0] = byte;
+                cache->valLen = 1;
+
+                cache->hdrLineFsmStat = FsmStat_ValGot;
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_ValGot:
+            if (byte >= 0x20 &&
+                byte <= 0x7E) {
+                if (cache->valLen == ECO_HDR_VAL_MAX_LEN) {
+                    return EcoRes_Err;
+                }
+
+                cache->valBuf[cache->valLen] = byte;
+                cache->valLen++;
+
+                break;
+            }
+
+            if (byte == '\r') {
+                cache->valBuf[cache->valLen] = '\0';
+
+                cache->hdrLineFsmStat = FsmStat_TrailingChCrGot;
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_TrailingChCrGot:
+            if (byte == '\n') {
+                *procLen = i + 1;
+
+                cache->hdrLineFsmStat = FsmStat_TrailingChLfGot;
+                return EcoRes_Ok;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_TrailingChLfGot:
+            return EcoRes_Err;
+        }
+    }
+
+    *procLen = availLen;
+
+    return EcoRes_Again;
+}
+
+static EcoRes EcoHttp_ParseEmpLine(EcoHttpCli *cli, ParseCache *cache, const void *buf, int availLen, int *procLen) {
+    typedef enum _FsmStat {
+        FsmStat_Start = 0,
+
+        FsmStat_TrailingChCrGot,
+        FsmStat_TrailingChLfGot,
+
+        FsmStat_Done = FsmStat_TrailingChLfGot,
+    } FsmStat;
+
+    for (int i = 0; i < availLen; i++) {
+        uint8_t byte = ((uint8_t *)buf)[i];
+
+        switch (cache->hdrLineFsmStat) {
+        case FsmStat_Start:
+            if (byte == '\r') {
+                cache->hdrLineFsmStat = FsmStat_TrailingChCrGot;
+                break;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_TrailingChCrGot:
+            if (byte == '\n') {
+                *procLen = i + 1;
+
+                cache->hdrLineFsmStat = FsmStat_TrailingChLfGot;
+                return EcoRes_Ok;
+            }
+
+            return EcoRes_Err;
+
+        case FsmStat_TrailingChLfGot:
+            return EcoRes_Err;
+        }
+    }
+
+    *procLen = availLen;
+
+    return EcoRes_Again;
+}
+
+static EcoRes EcoHttp_ParseRspMsg(EcoHttpCli *cli) {
+    typedef enum _FsmStat {
+        FsmStat_StatLine = 0,
+        FsmStat_HdrLine,
+        FsmStat_EmpLine,
+        FsmStat_BodyData,
+    } FsmStat;
+
+    ParseCache cache;
+    uint8_t rcvBuf[512];
+    int rcvLen;
+    int remLen;
+    int procLen;
+    EcoRes res;
+
+    ParseCache_Init(&cache);
+
+    /* Create a HTTP response structure if it does not exist. */
+    if (cli->rsp == NULL) {
+        cli->rsp = EcoHttpRsp_New();
+        if (cli->rsp == NULL) {
+            return EcoRes_NoMem;
+        }
+    }
+
+    /* Create a header table if it does not exist. */
+    if (cli->rsp->hdrTab == NULL) {
+        cli->rsp->hdrTab = EcoHdrTab_New();
+        if (cli->rsp->hdrTab == NULL) {
+            return EcoRes_NoMem;
+        }
+    }
+
+    while (true) {
+        rcvLen = cli->chanReadHook(rcvBuf, (int)sizeof(rcvBuf), cli->chanHookArg);
+        if (rcvLen < 0) {
+            return (EcoRes)rcvLen;
+        }
+
+        remLen = rcvLen;
+        while (remLen != 0) {
+            switch (cache.rspMsgFsmStat) {
+            case FsmStat_StatLine:
+                res = EcoHttp_ParseStatLine(cli, &cache, rcvBuf + rcvLen - remLen, remLen, &procLen);
+                if (res != EcoRes_Ok &&
+                    res != EcoRes_Again) {
+                    return res;
+                }
+
+                if (res == EcoRes_Ok) {
+                    cache.rspMsgFsmStat = FsmStat_HdrLine;
+                }
+
+                remLen -= procLen;
+
+                break;
+
+            case FsmStat_HdrLine: {
+                uint8_t byte = *(rcvBuf + rcvLen - remLen);
+
+                /* If the current byte is CR character, then
+                   it may reach the end of the header line. */
+                if (byte == '\r') {
+                    cache.rspMsgFsmStat = FsmStat_EmpLine;
+
+                    break;
+                }
+
+                /* Try to parse this header line. */
+                res = EcoHttp_ParseHdrLine(cli, &cache, rcvBuf + rcvLen - remLen, remLen, &procLen);
+                if (res != EcoRes_Ok &&
+                    res != EcoRes_Again) {
+                    return res;
+                }
+
+                /* If this header line is parsed successfully,
+                   then add it to the header table. */
+                if (res == EcoRes_Ok) {
+                    cache.hdrLineFsmStat = 0;
+
+                    res = EcoHdrTab_Add(cli->rsp->hdrTab, cache.keyBuf, cache.valBuf);
+                    if (res != EcoRes_Ok) {
+                        return res;
+                    }
+
+                    /* If this header line is "Content-Length",
+                       then get the content length. */
+                    if (strcmp(cache.keyBuf, "content-length") == 0) {
+                        char *endPtr;
+
+                        cache.contLen = (uint32_t)strtol(cache.valBuf, &endPtr, 10);
+                        if (*endPtr != '\0') {
+                            return EcoRes_Err;
+                        }
+                    }
+                }
+
+                remLen -= procLen;
+
+                break;
+            }
+
+            case FsmStat_EmpLine:
+                res = EcoHttp_ParseEmpLine(cli, &cache, rcvBuf + rcvLen - remLen, remLen, &procLen);
+                if (res != EcoRes_Ok &&
+                    res != EcoRes_Again) {
+                    return res;
+                }
+
+                if (res == EcoRes_Ok) {
+
+                    /* If body data does not exist. */
+                    if (cache.contLen == 0) {
+                        cli->bodyWriteHook(0, NULL, 0, cli->bodyHookArg);
+
+                        return EcoRes_Ok;
+                    }
+
+                    cache.rspMsgFsmStat = FsmStat_BodyData;
+                }
+
+                remLen -= procLen;
+
+                break;
+
+            case FsmStat_BodyData: {
+                int waitLen;
+                int curLen;
+                int wrLen;
+
+                waitLen = cache.contLen - cache.bodyLen;
+                if (remLen > waitLen) {
+                    curLen = waitLen;
+                } else {
+                    curLen = remLen;
+                }
+
+                wrLen = cli->bodyWriteHook(cache.bodyOff, rcvBuf + rcvLen - remLen, curLen, cli->bodyHookArg);
+                if (wrLen < 0) {
+                    return (EcoRes)wrLen;
+                }
+
+                if (wrLen != curLen) {
+                    return EcoRes_Err;
+                }
+
+                cache.bodyOff += curLen;
+                cache.bodyLen += curLen;
+
+                if (cache.bodyLen == cache.contLen) {
+                    cli->bodyWriteHook(cache.bodyOff, NULL, 0, cli->bodyHookArg);
+
+                    return EcoRes_Ok;
+                }
+
+                remLen -= curLen;
+
+                break;
+            }
+            }
+        }
+    }
+}
+
+EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
+    EcoChanAddr chanAddr;
+    EcoRes res;
+
+    if (cli->chanOpenHook == NULL ||
+        cli->chanCloseHook == NULL ||
+        cli->chanReadHook == NULL ||
+        cli->chanWriteHook == NULL) {
+        return EcoRes_NoChanHook;
+    }
+
+    /* Set channel address. */
+    memcpy(chanAddr.addr, cli->req->chanAddr.addr, 4);
+    chanAddr.port = cli->req->chanAddr.port;
+
+    /* Open channel. */
+    res = cli->chanOpenHook(&chanAddr, cli->chanHookArg);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    // TODO: Sent HTTP request.
+
+    res = EcoHttp_ParseRspMsg(cli);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    /* Close channel. */
+    res = cli->chanCloseHook(cli->chanHookArg);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    return EcoRes_Ok;
+}
