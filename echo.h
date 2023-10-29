@@ -31,6 +31,8 @@ typedef enum _EcoHttpMeth {
 #define ECO_DEF_HTTP_METH   EcoHttpMeth_Get
 
 typedef enum _EcoOpt {
+
+    /* Options for HTTP request. */
     EcoOpt_Url,
     EcoOpt_Method,
     EcoOpt_Verion,
@@ -38,14 +40,14 @@ typedef enum _EcoOpt {
     EcoOpt_BodyBuf,
     EcoOpt_BodyLen,
 
-    EcoOpt_Request,
+    /* Options for HTTP client. */
     EcoOpt_ChanHookArg,
     EcoOpt_ChanOpenHook,
     EcoOpt_ChanCloseHook,
     EcoOpt_ChanSetOptHook,
     EcoOpt_ChanReadHook,
     EcoOpt_ChanWriteHook,
-
+    EcoOpt_Request,
     EcoOpt_BodyHookArg,
     EcoOpt_BodyWriteHook,
 } EcoOpt;
@@ -162,12 +164,6 @@ typedef struct _EcoHttpRsp {
 
 
 
-typedef struct _EcoHttpCli {
-    uint32_t placeholder;
-} EcoHttpCli;
-
-
-
 typedef EcoRes (*EcoChanOpenHook)(EcoChanAddr *addr, EcoArg arg);
 
 typedef EcoRes (*EcoChanCloseHook)(EcoArg arg);
@@ -227,7 +223,23 @@ typedef int (*EcoBodyWriteHook)(int off, const void *buf, int len, EcoArg arg);
 
 
 
+typedef struct _EcoHttpCli {
+    EcoArg chanHookArg;
+    EcoChanOpenHook chanOpenHook;
+    EcoChanCloseHook chanCloseHook;
+    EcoChanSetOptHook chanSetOptHook;
+    EcoChanReadHook chanReadHook;
+    EcoChanWriteHook chanWriteHook;
+    EcoArg bodyHookArg;
+    EcoBodyWriteHook bodyWriteHook;
+    EcoHttpReq *req;
+} EcoHttpCli;
+
+void EcoHttpCli_Init(EcoHttpCli *cli);
+
 EcoHttpCli *EcoHttpCli_New(void);
+
+void EcoHttpCli_Deinit(EcoHttpCli *cli);
 
 void EcoHttpCli_Del(EcoHttpCli *cli);
 

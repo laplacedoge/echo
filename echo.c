@@ -437,3 +437,100 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
 
     return EcoRes_Ok;
 }
+
+void EcoHttpCli_Init(EcoHttpCli *cli) {
+    cli->chanHookArg = NULL;
+    cli->chanOpenHook = NULL;
+    cli->chanCloseHook = NULL;
+    cli->chanSetOptHook = NULL;
+    cli->chanReadHook = NULL;
+    cli->chanWriteHook = NULL;
+    cli->bodyHookArg = NULL;
+    cli->bodyWriteHook = NULL;
+    cli->req = NULL;
+}
+
+EcoHttpCli *EcoHttpCli_New(void) {
+    EcoHttpCli *newCli;
+
+    newCli = (EcoHttpCli *)malloc(sizeof(EcoHttpCli));
+    if (newCli == NULL) {
+        return NULL;
+    }
+
+    EcoHttpCli_Init(newCli);
+
+    return newCli;
+}
+
+void EcoHttpCli_Deinit(EcoHttpCli *cli) {
+    cli->chanHookArg = NULL;
+    cli->chanOpenHook = NULL;
+    cli->chanCloseHook = NULL;
+    cli->chanSetOptHook = NULL;
+    cli->chanReadHook = NULL;
+    cli->chanWriteHook = NULL;
+    cli->bodyHookArg = NULL;
+    cli->bodyWriteHook = NULL;
+
+    if (cli->req != NULL) {
+        EcoHttpReq_Del(cli->req);
+        cli->req = NULL;
+    }
+}
+
+void EcoHttpCli_Del(EcoHttpCli *cli) {
+    EcoHttpCli_Deinit(cli);
+
+    free(cli);
+}
+
+EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
+    switch (opt) {
+    case EcoOpt_ChanHookArg:
+        cli->chanHookArg = arg;
+        break;
+
+    case EcoOpt_ChanOpenHook:
+        cli->chanOpenHook = (EcoChanOpenHook)arg;
+        break;
+
+    case EcoOpt_ChanCloseHook:
+        cli->chanCloseHook = (EcoChanCloseHook)arg;
+        break;
+
+    case EcoOpt_ChanSetOptHook:
+        cli->chanSetOptHook = (EcoChanSetOptHook)arg;
+        break;
+
+    case EcoOpt_ChanReadHook:
+        cli->chanReadHook = (EcoChanReadHook)arg;
+        break;
+
+    case EcoOpt_ChanWriteHook:
+        cli->chanWriteHook = (EcoChanWriteHook)arg;
+        break;
+
+    case EcoOpt_Request:
+        if (cli->req != NULL) {
+            EcoHttpReq_Del(cli->req);
+        }
+        cli->req = (EcoHttpReq *)arg;
+        break;
+
+    case EcoOpt_BodyHookArg:
+        cli->bodyHookArg = arg;
+        break;
+
+    case EcoOpt_BodyWriteHook:
+        cli->bodyWriteHook = (EcoBodyWriteHook)arg;
+        break;
+
+    default:
+        return EcoRes_BadOpt;
+    }
+
+    return EcoRes_Ok;
+}
+
+EcoRes EcoHttpCli_Issue(EcoHttpCli *cli);
