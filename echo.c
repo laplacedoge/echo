@@ -440,8 +440,8 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
 }
 
 void EcoHttpRsp_Init(EcoHttpRsp *rsp) {
-    rsp->ver = ECO_DEF_HTTP_VER;
-    rsp->statCode = ECO_DEF_STAT_CODE;
+    rsp->ver = EcoHttpVer_Unknown;
+    rsp->statCode = EcoStatCode_Unknown;
     rsp->hdrTab = NULL;
     rsp->bodyBuf = NULL;
     rsp->bodyLen = 0;
@@ -461,8 +461,8 @@ EcoHttpRsp *EcoHttpRsp_New(void) {
 }
 
 void EcoHttpRsp_Deinit(EcoHttpRsp *rsp) {
-    rsp->ver = ECO_DEF_HTTP_VER;
-    rsp->statCode = ECO_DEF_STAT_CODE;
+    rsp->ver = EcoHttpVer_Unknown;
+    rsp->statCode = EcoStatCode_Unknown;
 
     if (rsp->hdrTab != NULL) {
         EcoHdrTab_Del(rsp->hdrTab);
@@ -645,7 +645,7 @@ void ParseCache_Deinit(ParseCache *cache) {
     ParseCache_Init(cache);
 }
 
-static EcoRes EcoHttp_ParseStatLine(EcoHttpCli *cli, ParseCache *cache, const void *buf, int availLen, int *procLen) {
+static EcoRes EcoCli_ParseStatLine(EcoHttpCli *cli, ParseCache *cache, const void *buf, int availLen, int *procLen) {
     typedef enum _FsmStat {
         FsmStat_Start = 0,
 
@@ -846,6 +846,32 @@ static EcoRes EcoHttp_ParseStatLine(EcoHttpCli *cli, ParseCache *cache, const vo
     return EcoRes_Again;
 }
 
+static EcoHttpVer EcoHttpVer_FromNum(uint32_t major, uint32_t minor) {
+    if (major == 0) {
+        if (minor == 9) {
+            return EcoHttpVer_0_9;
+        }
+    } else if (major == 1) {
+        if (minor == 0) {
+            return EcoHttpVer_1_0;
+        } else if (minor == 1) {
+            return EcoHttpVer_1_1;
+        }
+    }
+
+    return EcoHttpVer_Unknown;
+}
+
+static EcoStatCode EcoStatCode_FromNum(uint32_t statCode) {
+    switch (statCode) {
+    case EcoStatCode_Ok: return EcoStatCode_Ok;
+    case EcoStatCode_BadRequest: return EcoStatCode_BadRequest;
+    case EcoStatCode_NotFound: return EcoStatCode_NotFound;
+    case EcoStatCode_ServerError: return EcoStatCode_ServerError;
+    default: return EcoStatCode_Unknown;
+    }
+}
+
 static const char hdrKeyLcChTab[] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -865,7 +891,7 @@ static const char hdrKeyLcChTab[] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 };
 
-static EcoRes EcoHttp_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const void *buf, int availLen, int *procLen) {
+static EcoRes EcoCli_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const void *buf, int availLen, int *procLen) {
     typedef enum _FsmStat {
         FsmStat_Start = 0,
 
@@ -999,7 +1025,7 @@ static EcoRes EcoHttp_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const voi
     return EcoRes_Again;
 }
 
-static EcoRes EcoHttp_ParseEmpLine(EcoHttpCli *cli, ParseCache *cache, const void *buf, int availLen, int *procLen) {
+static EcoRes EcoCli_ParseEmpLine(EcoHttpCli *cli, ParseCache *cache, const void *buf, int availLen, int *procLen) {
     typedef enum _FsmStat {
         FsmStat_Start = 0,
 
@@ -1041,7 +1067,7 @@ static EcoRes EcoHttp_ParseEmpLine(EcoHttpCli *cli, ParseCache *cache, const voi
     return EcoRes_Again;
 }
 
-static EcoRes EcoHttp_ParseRspMsg(EcoHttpCli *cli) {
+static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
     typedef enum _FsmStat {
         FsmStat_StatLine = 0,
         FsmStat_HdrLine,
@@ -1084,13 +1110,36 @@ static EcoRes EcoHttp_ParseRspMsg(EcoHttpCli *cli) {
         while (remLen != 0) {
             switch (cache.rspMsgFsmStat) {
             case FsmStat_StatLine:
-                res = EcoHttp_ParseStatLine(cli, &cache, rcvBuf + rcvLen - remLen, remLen, &procLen);
+
+                /* Try to parse the status line. */
+                res = EcoCli_ParseStatLine(cli, &cache, rcvBuf + rcvLen - remLen, remLen, &procLen);
                 if (res != EcoRes_Ok &&
                     res != EcoRes_Again) {
                     return res;
                 }
 
+                /* If this status line is parsed successfully,
+                   then add the cache to the response structure. */
                 if (res == EcoRes_Ok) {
+                    EcoHttpVer ver;
+                    EcoStatCode code;
+
+                    /* Validate the HTTP version. */
+                    ver = EcoHttpVer_FromNum(cache.verMajor, cache.verMinor);
+                    if (ver == EcoHttpVer_Unknown) {
+                        return EcoRes_BadHttpVer;
+                    }
+
+                    cli->rsp->ver = ver;
+
+                    /* Validate the HTTP status code. */
+                    code = EcoStatCode_FromNum(cache.statCode);
+                    if (code == EcoStatCode_Unknown) {
+                        return EcoRes_BadStatCode;
+                    }
+
+                    cli->rsp->statCode = code;
+
                     cache.rspMsgFsmStat = FsmStat_HdrLine;
                 }
 
@@ -1110,7 +1159,7 @@ static EcoRes EcoHttp_ParseRspMsg(EcoHttpCli *cli) {
                 }
 
                 /* Try to parse this header line. */
-                res = EcoHttp_ParseHdrLine(cli, &cache, rcvBuf + rcvLen - remLen, remLen, &procLen);
+                res = EcoCli_ParseHdrLine(cli, &cache, rcvBuf + rcvLen - remLen, remLen, &procLen);
                 if (res != EcoRes_Ok &&
                     res != EcoRes_Again) {
                     return res;
@@ -1144,7 +1193,7 @@ static EcoRes EcoHttp_ParseRspMsg(EcoHttpCli *cli) {
             }
 
             case FsmStat_EmpLine:
-                res = EcoHttp_ParseEmpLine(cli, &cache, rcvBuf + rcvLen - remLen, remLen, &procLen);
+                res = EcoCli_ParseEmpLine(cli, &cache, rcvBuf + rcvLen - remLen, remLen, &procLen);
                 if (res != EcoRes_Ok &&
                     res != EcoRes_Again) {
                     return res;
@@ -1228,7 +1277,7 @@ EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
 
     // TODO: Sent HTTP request.
 
-    res = EcoHttp_ParseRspMsg(cli);
+    res = EcoCli_ParseRspMsg(cli);
     if (res != EcoRes_Ok) {
         return res;
     }
