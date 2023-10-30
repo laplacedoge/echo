@@ -1461,7 +1461,8 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
         FsmStat_StatLine = 0,
         FsmStat_HdrLine,
         FsmStat_EmpLine,
-        FsmStat_BodyData,
+        FsmStat_SaveBodyData,
+        FsmStat_WriteBodyData,
     } FsmStat;
 
     ParseCache cache;
@@ -1610,21 +1611,62 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
                         return EcoRes_Ok;
                     }
 
-                    /* If body data does not exist. */
-                    if (cache.contLen == 0) {
-                        cli->bodyWriteHook(0, NULL, 0, cli->bodyHookArg);
+                    /* Determine whther to save or write body data. */
+                    if (cli->bodyWriteHook == NULL) {
+                        if (cache.contLen == 0) {
+                            return EcoRes_Ok;
+                        }
 
-                        return EcoRes_Ok;
+                        /* Allocate buffer for body data. */
+                        cli->rsp->bodyBuf = (uint8_t *)malloc((size_t)cache.contLen);
+                        if (cli->rsp->bodyBuf == NULL) {
+                            return EcoRes_NoMem;
+                        }
+
+                        cli->rsp->bodyLen = 0;
+
+                        cache.rspMsgFsmStat = FsmStat_SaveBodyData;
+                    } else {
+                        if (cache.contLen == 0) {
+                            cli->bodyWriteHook(0, NULL, 0, cli->bodyHookArg);
+
+                            return EcoRes_Ok;
+                        }
+
+                        cache.rspMsgFsmStat = FsmStat_WriteBodyData;
                     }
-
-                    cache.rspMsgFsmStat = FsmStat_BodyData;
                 }
 
                 remLen -= procLen;
 
                 break;
 
-            case FsmStat_BodyData: {
+            case FsmStat_SaveBodyData: {
+                EcoHttpRsp *rsp = cli->rsp;
+                int waitLen;
+                int curLen;
+
+                waitLen = cache.contLen - rsp->bodyLen;
+                if (remLen > waitLen) {
+                    curLen = waitLen;
+                } else {
+                    curLen = remLen;
+                }
+
+                memcpy(rsp->bodyBuf + rsp->bodyLen, rcvBuf + rcvLen - remLen, curLen);
+
+                rsp->bodyLen += curLen;
+
+                remLen -= curLen;
+
+                if (rsp->bodyLen == cache.contLen) {
+                    return EcoRes_Ok;
+                }
+
+                break;
+            }
+
+            case FsmStat_WriteBodyData: {
                 int waitLen;
                 int curLen;
                 int wrLen;
@@ -1648,13 +1690,13 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
                 cache.bodyOff += curLen;
                 cache.bodyLen += curLen;
 
+                remLen -= curLen;
+
                 if (cache.bodyLen == cache.contLen) {
                     cli->bodyWriteHook(cache.bodyOff, NULL, 0, cli->bodyHookArg);
 
                     return EcoRes_Ok;
                 }
-
-                remLen -= curLen;
 
                 break;
             }
