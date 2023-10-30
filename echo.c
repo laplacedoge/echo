@@ -793,6 +793,12 @@ EcoRes EcoCli_AutoGenHdrs(EcoHttpCli *cli) {
     EcoChanAddr *chanAddr = &req->chanAddr;
     EcoRes res;
 
+    /* If request header table is not created yet, create it. */
+    req->hdrTab = EcoHdrTab_New();
+    if (req->hdrTab == NULL) {
+        return EcoRes_NoMem;
+    }
+
     res = EcoHdrTab_Find(req->hdrTab, "host", NULL);
     if (res == EcoRes_NotFound) {
         res = EcoHdrTab_AddFmt(req->hdrTab, "host", "%u.%u.%u.%u:%u",
@@ -1716,6 +1722,7 @@ EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
         return EcoRes_NoChanHook;
     }
 
+    /* HTTP request must exist. */
     if (cli->req == NULL) {
         return EcoRes_NoReq;
     }
