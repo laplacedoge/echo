@@ -1434,6 +1434,11 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
 
                 if (res == EcoRes_Ok) {
 
+                    /* If the current method is HEAD. */
+                    if (cli->req->meth == EcoHttpMeth_Head) {
+                        return EcoRes_Ok;
+                    }
+
                     /* If body data does not exist. */
                     if (cache.contLen == 0) {
                         cli->bodyWriteHook(0, NULL, 0, cli->bodyHookArg);
