@@ -668,10 +668,93 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
     return EcoRes_Ok;
 }
 
+#define ECO_SND_CACHE_BUF_LEN   128
+
+typedef struct _SendCache {
+    uint8_t datBuf[ECO_SND_CACHE_BUF_LEN];
+    size_t datLen;
+} SendCache;
+
+void SendCache_Init(SendCache *cache) {
+    cache->datLen = 0;
+}
+
+EcoRes EcoCli_SendData(EcoHttpCli *cli, SendCache *cache, void *buf, int len) {
+    int restLen;
+    int remLen;
+    int curLen;
+    int wrLen;
+
+    /* If the send cache is full, send them immediately. */
+    if (cache->datLen == sizeof(cache->datBuf)) {
+        wrLen = cli->chanWriteHook(cache->datBuf, cache->datLen, cli->chanHookArg);
+        if (wrLen != cache->datLen) {
+            return EcoRes_Err;
+        }
+
+        cache->datLen = 0;
+    }
+
+    remLen = len;
+    while (remLen != 0) {
+        restLen = sizeof(cache->datBuf) - cache->datLen;
+        if (remLen >= restLen) {
+            curLen = restLen;
+        } else {
+            curLen = remLen;
+        }
+
+        if (curLen == sizeof(cache->datBuf)) {
+            wrLen = cli->chanWriteHook((uint8_t *)buf + len - remLen, curLen, cli->chanHookArg);
+            if (wrLen != cache->datLen) {
+                return EcoRes_Err;
+            }
+        } else {
+            memcpy(cache->datBuf + cache->datLen, (uint8_t *)buf + len - remLen, curLen);
+            cache->datLen += curLen;
+
+            remLen -= curLen;
+
+            /* If the send cache is full, send them immediately. */
+            if (cache->datLen == sizeof(cache->datBuf)) {
+                wrLen = cli->chanWriteHook(cache->datBuf, cache->datLen, cli->chanHookArg);
+                if (wrLen != cache->datLen) {
+                    return EcoRes_Err;
+                }
+
+                cache->datLen = 0;
+            }
+        }
+    }
+
+    return EcoRes_Ok;
+}
+
+EcoRes EcoCli_FlushCache(EcoHttpCli *cli, SendCache *cache) {
+    int wrLen;
+
+    if (cache->datLen == 0) {
+        return EcoRes_Ok;
+    }
+
+    wrLen = cli->chanWriteHook(cache->datBuf, cache->datLen, cli->chanHookArg);
+    if (wrLen != cache->datLen) {
+        return EcoRes_Err;
+    }
+
+    cache->datLen = 0;
+
+    return EcoRes_Ok;
+}
+
 EcoRes EcoCli_SendReqMsg(EcoHttpCli *cli) {
     char *startLineBuf[512];
+    SendCache cache;
     int wrLen;
     int ret;
+    EcoRes res;
+
+    SendCache_Init(&cache);
 
     /* Send start line. */
     ret = snprintf((char *)startLineBuf, sizeof(startLineBuf),
@@ -683,48 +766,54 @@ EcoRes EcoCli_SendReqMsg(EcoHttpCli *cli) {
         return EcoRes_TooBig;
     }
 
-    wrLen = cli->chanWriteHook(startLineBuf, ret, cli->chanHookArg);
-    if (wrLen != ret) {
-        return EcoRes_Err;
+    res = EcoCli_SendData(cli, &cache, startLineBuf, ret);
+    if (res != EcoRes_Ok) {
+        return res;
     }
 
     /* Send header lines. */
     for (size_t i = 0; i < cli->req->hdrTab->kvpNum; i++) {
         EcoKvp *curKvp = cli->req->hdrTab->kvpAry + i;
 
-        wrLen = cli->chanWriteHook(curKvp->keyBuf, curKvp->keyLen, cli->chanHookArg);
-        if (wrLen != curKvp->keyLen) {
-            return EcoRes_Err;
+        res = EcoCli_SendData(cli, &cache, curKvp->keyBuf, curKvp->keyLen);
+        if (res != EcoRes_Ok) {
+            return res;
         }
 
-        wrLen = cli->chanWriteHook(": ", 2, cli->chanHookArg);
-        if (wrLen != 2) {
-            return EcoRes_Err;
+        res = EcoCli_SendData(cli, &cache, ": ", 2);
+        if (res != EcoRes_Ok) {
+            return res;
         }
 
-        wrLen = cli->chanWriteHook(curKvp->valBuf, curKvp->valLen, cli->chanHookArg);
-        if (wrLen != curKvp->valLen) {
-            return EcoRes_Err;
+        res = EcoCli_SendData(cli, &cache, curKvp->valBuf, curKvp->valLen);
+        if (res != EcoRes_Ok) {
+            return res;
         }
 
-        wrLen = cli->chanWriteHook("\r\n", 2, cli->chanHookArg);
-        if (wrLen != 2) {
-            return EcoRes_Err;
+        res = EcoCli_SendData(cli, &cache, "\r\n", 2);
+        if (res != EcoRes_Ok) {
+            return res;
         }
     }
 
     /* Send empty line. */
-    wrLen = cli->chanWriteHook("\r\n", 2, cli->chanHookArg);
-    if (wrLen != 2) {
-        return EcoRes_Err;
+    res = EcoCli_SendData(cli, &cache, "\r\n", 2);
+    if (res != EcoRes_Ok) {
+        return res;
     }
 
     /* Send body data. */
     if (cli->req->bodyBuf != NULL) {
-        wrLen = cli->chanWriteHook(cli->req->bodyBuf, cli->req->bodyLen, cli->chanHookArg);
-        if (wrLen != cli->req->bodyLen) {
-            return EcoRes_Err;
+        res = EcoCli_SendData(cli, &cache, cli->req->bodyBuf, cli->req->bodyLen);
+        if (res != EcoRes_Ok) {
+            return res;
         }
+    }
+
+    /* Flush the send cache. */
+    res = EcoCli_FlushCache(cli, &cache);
+    if (res != EcoRes_Ok) {
+        return res;
     }
 
     return EcoRes_Ok;
