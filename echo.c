@@ -35,6 +35,19 @@
 
 
 
+#define ECO_VER_MAJOR_STR   "1"
+#define ECO_VER_MINOR_STR   "0"
+#define ECO_VER_MICRO_STR   "0"
+
+#define ECO_NAME_STR        "ecHo"
+
+#define ECO_USER_AGENT_STR  ECO_NAME_STR "/"        \
+                            ECO_VER_MAJOR_STR "."   \
+                            ECO_VER_MINOR_STR "."   \
+                            ECO_VER_MICRO_STR
+
+
+
 const char *EcoHttpVer_ToStr(EcoHttpVer ver) {
     switch (ver) {
     case EcoHttpVer_0_9: return "0.9";
@@ -226,6 +239,8 @@ EcoRes EcoHdrTab_AddFmt(EcoHdrTab *tab, const char *key, const char *fmt, ...) {
 
         return res;
     }
+
+    free(valBuf);
 
     return EcoRes_Ok;
 }
@@ -544,6 +559,37 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
         break;
     }
 
+    case EcoOpt_Addr:
+        memcpy(req->chanAddr.addr, (uint8_t *)arg, 4);
+        break;
+
+    case EcoOpt_Port:
+        req->chanAddr.port = (uint16_t)arg;
+        break;
+
+    case EcoOpt_Path: {
+        char *pathBuf = (char *)arg;
+        size_t pathLen = strlen(pathBuf);
+
+        if (req->urlBuf != NULL) {
+            free(req->urlBuf);
+
+            req->urlBuf = NULL;
+            req->urlLen = 0;
+        }
+
+        req->urlBuf = (char *)malloc(pathLen + 1);
+        if (req->urlBuf == NULL) {
+            return EcoRes_NoMem;
+        }
+
+        memcpy(req->urlBuf, pathBuf, pathLen + 1);
+
+        req->urlLen = pathLen;
+
+        break;
+    }
+
     case EcoOpt_Method:
         req->meth = (EcoHttpMeth)arg;
         break;
@@ -753,6 +799,14 @@ EcoRes EcoCli_AutoGenHdrs(EcoHttpCli *cli) {
                                chanAddr->addr[0], chanAddr->addr[1],
                                chanAddr->addr[2], chanAddr->addr[3],
                                chanAddr->port);
+        if (res != EcoRes_Ok) {
+            return res;
+        }
+    }
+
+    res = EcoHdrTab_Find(req->hdrTab, "user-agent", NULL);
+    if (res == EcoRes_NotFound) {
+        res = EcoHdrTab_AddFmt(req->hdrTab, "user-agent", ECO_USER_AGENT_STR);
         if (res != EcoRes_Ok) {
             return res;
         }
@@ -1201,6 +1255,7 @@ static EcoHttpVer EcoHttpVer_FromNum(uint32_t major, uint32_t minor) {
 static EcoStatCode EcoStatCode_FromNum(uint32_t statCode) {
     switch (statCode) {
     case EcoStatCode_Ok: return EcoStatCode_Ok;
+    case EcoStatCode_PartialContent: return EcoStatCode_PartialContent;
     case EcoStatCode_BadRequest: return EcoStatCode_BadRequest;
     case EcoStatCode_NotFound: return EcoStatCode_NotFound;
     case EcoStatCode_ServerError: return EcoStatCode_ServerError;
@@ -1418,20 +1473,21 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
 
     ParseCache_Init(&cache);
 
-    /* Create a HTTP response structure if it does not exist. */
+    /* Create a HTTP response if it does not exist,
+       or if it exists, then deinitialize it. */
     if (cli->rsp == NULL) {
         cli->rsp = EcoHttpRsp_New();
         if (cli->rsp == NULL) {
             return EcoRes_NoMem;
         }
+    } else {
+        EcoHttpRsp_Deinit(cli->rsp);
     }
 
-    /* Create a header table if it does not exist. */
+    /* Create a new header table for HTTP response. */
+    cli->rsp->hdrTab = EcoHdrTab_New();
     if (cli->rsp->hdrTab == NULL) {
-        cli->rsp->hdrTab = EcoHdrTab_New();
-        if (cli->rsp->hdrTab == NULL) {
-            return EcoRes_NoMem;
-        }
+        return EcoRes_NoMem;
     }
 
     while (true) {

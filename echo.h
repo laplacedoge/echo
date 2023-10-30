@@ -87,6 +87,9 @@ typedef enum _EcoOpt {
 
     /* Options for HTTP request. */
     EcoOpt_Url,
+    EcoOpt_Addr,
+    EcoOpt_Port,
+    EcoOpt_Path,
     EcoOpt_Method,
     EcoOpt_Verion,
     EcoOpt_Headers,
@@ -228,6 +231,7 @@ typedef enum _EcoStatCode {
     EcoStatCode_Unknown             = -1,
 
     EcoStatCode_Ok                  = 200,
+    EcoStatCode_PartialContent      = 206,
     EcoStatCode_BadRequest          = 400,
     EcoStatCode_NotFound            = 404,
     EcoStatCode_ServerError         = 500,
