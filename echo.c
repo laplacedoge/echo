@@ -689,7 +689,7 @@ EcoRes EcoCli_SendData(EcoHttpCli *cli, SendCache *cache, void *buf, int len) {
     if (cache->datLen == sizeof(cache->datBuf)) {
         wrLen = cli->chanWriteHook(cache->datBuf, cache->datLen, cli->chanHookArg);
         if (wrLen != cache->datLen) {
-            return EcoRes_Err;
+            return EcoRes_BadChanWrite;
         }
 
         cache->datLen = 0;
@@ -707,7 +707,7 @@ EcoRes EcoCli_SendData(EcoHttpCli *cli, SendCache *cache, void *buf, int len) {
         if (curLen == sizeof(cache->datBuf)) {
             wrLen = cli->chanWriteHook((uint8_t *)buf + len - remLen, curLen, cli->chanHookArg);
             if (wrLen != cache->datLen) {
-                return EcoRes_Err;
+                return EcoRes_BadChanWrite;
             }
         } else {
             memcpy(cache->datBuf + cache->datLen, (uint8_t *)buf + len - remLen, curLen);
@@ -719,7 +719,7 @@ EcoRes EcoCli_SendData(EcoHttpCli *cli, SendCache *cache, void *buf, int len) {
             if (cache->datLen == sizeof(cache->datBuf)) {
                 wrLen = cli->chanWriteHook(cache->datBuf, cache->datLen, cli->chanHookArg);
                 if (wrLen != cache->datLen) {
-                    return EcoRes_Err;
+                    return EcoRes_BadChanWrite;
                 }
 
                 cache->datLen = 0;
@@ -1022,7 +1022,7 @@ static EcoRes EcoCli_ParseStatLine(EcoHttpCli *cli, ParseCache *cache, const voi
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadStatLine;
 
         case FsmStat_SpcAfterStatCodeGot:
             if ((byte >= 'a' && byte <= 'z') ||
@@ -1035,7 +1035,7 @@ static EcoRes EcoCli_ParseStatLine(EcoHttpCli *cli, ParseCache *cache, const voi
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadStatLine;
 
         case FsmStat_ReasonPhraseGot:
             if ((byte >= 'a' && byte <= 'z') ||
@@ -1043,7 +1043,7 @@ static EcoRes EcoCli_ParseStatLine(EcoHttpCli *cli, ParseCache *cache, const voi
                 byte == ' ' ||
                 byte == '-') {
                 if (cache->rfLen == ECO_RF_MAX_LEN) {
-                    return EcoRes_Err;
+                    return EcoRes_BadReasonPhase;
                 }
 
                 cache->rfBuf[cache->rfLen] = byte;
@@ -1059,7 +1059,7 @@ static EcoRes EcoCli_ParseStatLine(EcoHttpCli *cli, ParseCache *cache, const voi
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadStatLine;
 
         case FsmStat_TrailingChCrGot:
             if (byte == '\n') {
@@ -1069,7 +1069,7 @@ static EcoRes EcoCli_ParseStatLine(EcoHttpCli *cli, ParseCache *cache, const voi
                 return EcoRes_Ok;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadStatLine;
 
         case FsmStat_TrailingChLfGot:
             break;
@@ -1159,14 +1159,19 @@ static EcoRes EcoCli_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const void
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadHdrLine;
 
         case FsmStat_KeyGot:
-            if ((byte >= 'a' && byte <= 'z') ||
-                (byte >= 'A' && byte <= 'Z') ||
-                byte == '-') {
+            if (byte == ':') {
+                cache->keyBuf[cache->keyLen] = '\0';
+
+                cache->hdrLineFsmStat = FsmStat_ChColonGot;
+                break;
+            }
+
+            if (byte >= 0x20 && byte <= 0x7E) {
                 if (cache->keyLen == ECO_HDR_KEY_MAX_LEN) {
-                    return EcoRes_Err;
+                    return EcoRes_BadHdrKey;
                 }
 
                 cache->keyBuf[cache->keyLen] = hdrKeyLcChTab[byte];
@@ -1176,14 +1181,7 @@ static EcoRes EcoCli_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const void
                 break;
             }
 
-            if (byte == ':') {
-                cache->keyBuf[cache->keyLen] = '\0';
-
-                cache->hdrLineFsmStat = FsmStat_ChColonGot;
-                break;
-            }
-
-            return EcoRes_Err;
+            return EcoRes_BadHdrLine;
 
         case FsmStat_ChColonGot:
             if (byte == ' ') {
@@ -1200,7 +1198,7 @@ static EcoRes EcoCli_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const void
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadHdrLine;
 
         case FsmStat_ChSpaceGot:
             if (byte == ' ') {
@@ -1216,13 +1214,13 @@ static EcoRes EcoCli_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const void
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadHdrLine;
 
         case FsmStat_ValGot:
             if (byte >= 0x20 &&
                 byte <= 0x7E) {
                 if (cache->valLen == ECO_HDR_VAL_MAX_LEN) {
-                    return EcoRes_Err;
+                    return EcoRes_BadHdrVal;
                 }
 
                 cache->valBuf[cache->valLen] = byte;
@@ -1238,7 +1236,7 @@ static EcoRes EcoCli_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const void
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadHdrLine;
 
         case FsmStat_TrailingChCrGot:
             if (byte == '\n') {
@@ -1248,10 +1246,10 @@ static EcoRes EcoCli_ParseHdrLine(EcoHttpCli *cli, ParseCache *cache, const void
                 return EcoRes_Ok;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadHdrLine;
 
         case FsmStat_TrailingChLfGot:
-            return EcoRes_Err;
+            break;
         }
     }
 
@@ -1280,7 +1278,7 @@ static EcoRes EcoCli_ParseEmpLine(EcoHttpCli *cli, ParseCache *cache, const void
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadEmpLine;
 
         case FsmStat_TrailingChCrGot:
             if (byte == '\n') {
@@ -1290,10 +1288,10 @@ static EcoRes EcoCli_ParseEmpLine(EcoHttpCli *cli, ParseCache *cache, const void
                 return EcoRes_Ok;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadEmpLine;
 
         case FsmStat_TrailingChLfGot:
-            return EcoRes_Err;
+            break;
         }
     }
 
@@ -1417,7 +1415,7 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
 
                         cache.contLen = (uint32_t)strtol(cache.valBuf, &endPtr, 10);
                         if (*endPtr != '\0') {
-                            return EcoRes_Err;
+                            return EcoRes_BadHdrVal;
                         }
                     }
                 }

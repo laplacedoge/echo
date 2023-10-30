@@ -17,13 +17,24 @@ typedef enum _EcoRes {
 
     EcoRes_Again            = -7,
 
-    EcoRes_BadHttpVer       = -8,
+    EcoRes_BadStatLine      = -8,
+    EcoRes_BadHttpVer       = -9,
+    EcoRes_BadStatCode      = -10,
+    EcoRes_BadReasonPhase   = -11,
+    EcoRes_BadHdrLine       = -12,
+    EcoRes_BadHdrKey        = -13,
+    EcoRes_BadHdrVal        = -14,
+    EcoRes_BadEmpLine       = -15,
 
-    EcoRes_BadStatCode      = -9,
+    EcoRes_BadChanOpen      = -16,
+    EcoRes_BadChanSetOpt    = -17,
+    EcoRes_BadChanRead      = -18,
+    EcoRes_BadChanWrite     = -19,
+    EcoRes_BadChanClose     = -20,
 
-    EcoRes_TooSmall         = -10,
+    EcoRes_TooSmall         = -21,
 
-    EcoRes_TooBig           = -11,
+    EcoRes_TooBig           = -22,
 } EcoRes;
 
 typedef enum _EcoHttpVer {
