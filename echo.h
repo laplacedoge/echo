@@ -72,9 +72,11 @@ typedef enum _EcoOpt {
     EcoOpt_ChanSetOptHook,
     EcoOpt_ChanReadHook,
     EcoOpt_ChanWriteHook,
-    EcoOpt_Request,
+    EcoOpt_HdrHookArg,
+    EcoOpt_HdrWriteHook,
     EcoOpt_BodyHookArg,
     EcoOpt_BodyWriteHook,
+    EcoOpt_Request,
 } EcoOpt;
 
 
@@ -252,6 +254,27 @@ typedef int (*EcoChanWriteHook)(const void *buf, int len, EcoArg arg);
 
 
 /**
+ * @brief User defined header write hook function.
+ * 
+ * @param hdrNum Total number of headers to write.
+ * @param hdrIdx Index of the current header.
+ * @param keyBuf Header key buffer.
+ * @param keyLen Header key length.
+ * @param valBuf Header value buffer.
+ * @param valLen Header value length.
+ * @param arg Extra user data which can be set by option `EcoOpt_HdrHookArg`.
+ * 
+ * @return `EcoRes_Ok` for success.
+ *         Negative numbers represent corresponding errors.
+ */
+typedef EcoRes (*EcoHdrWriteHook)(size_t hdrNum, size_t hdrIdx,
+                                  const char *keyBuf, size_t keyLen,
+                                  const char *valBuf, size_t valLen,
+                                  EcoArg arg);
+
+
+
+/**
  * @brief User defined body write hook function.
  * 
  * @note When arg `off` equals 0, it indicates this is the first packet.
@@ -276,6 +299,8 @@ typedef struct _EcoHttpCli {
     EcoChanSetOptHook chanSetOptHook;
     EcoChanReadHook chanReadHook;
     EcoChanWriteHook chanWriteHook;
+    EcoArg hdrHookArg;
+    EcoHdrWriteHook hdrWriteHook;
     EcoArg bodyHookArg;
     EcoBodyWriteHook bodyWriteHook;
     EcoHttpReq *req;

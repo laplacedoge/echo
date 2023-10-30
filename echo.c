@@ -574,6 +574,8 @@ void EcoHttpCli_Init(EcoHttpCli *cli) {
     cli->chanSetOptHook = NULL;
     cli->chanReadHook = NULL;
     cli->chanWriteHook = NULL;
+    cli->hdrHookArg = NULL;
+    cli->hdrWriteHook = NULL;
     cli->bodyHookArg = NULL;
     cli->bodyWriteHook = NULL;
     cli->req = NULL;
@@ -646,11 +648,12 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
         cli->chanWriteHook = (EcoChanWriteHook)arg;
         break;
 
-    case EcoOpt_Request:
-        if (cli->req != NULL) {
-            EcoHttpReq_Del(cli->req);
-        }
-        cli->req = (EcoHttpReq *)arg;
+    case EcoOpt_HdrHookArg:
+        cli->hdrHookArg = arg;
+        break;
+
+    case EcoOpt_HdrWriteHook:
+        cli->hdrWriteHook = (EcoHdrWriteHook)arg;
         break;
 
     case EcoOpt_BodyHookArg:
@@ -659,6 +662,13 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
 
     case EcoOpt_BodyWriteHook:
         cli->bodyWriteHook = (EcoBodyWriteHook)arg;
+        break;
+
+    case EcoOpt_Request:
+        if (cli->req != NULL) {
+            EcoHttpReq_Del(cli->req);
+        }
+        cli->req = (EcoHttpReq *)arg;
         break;
 
     default:
@@ -1386,6 +1396,20 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
                 /* If the current byte is CR character, then
                    it may reach the end of the header line. */
                 if (byte == '\r') {
+                    if (cli->hdrWriteHook != NULL) {
+                        for (size_t i = 0; i < cli->rsp->hdrTab->kvpNum; i++) {
+                            EcoKvp *curKvp = cli->rsp->hdrTab->kvpAry + i;
+
+                            res = cli->hdrWriteHook(cli->rsp->hdrTab->kvpNum, i,
+                                                    curKvp->keyBuf, curKvp->keyLen,
+                                                    curKvp->valBuf, curKvp->valLen,
+                                                    cli->hdrHookArg);
+                            if (res != EcoRes_Ok) {
+                                return res;
+                            }
+                        }
+                    }
+
                     cache.rspMsgFsmStat = FsmStat_EmpLine;
 
                     break;
