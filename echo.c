@@ -1,10 +1,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #include "echo.h"
 
@@ -174,6 +175,35 @@ EcoRes EcoHdrTab_Add(EcoHdrTab *tab, const char *key, const char *val) {
 
         return EcoRes_Ok;
     }
+}
+
+EcoRes EcoHdrTab_AddFmt(EcoHdrTab *tab, const char *key, const char *fmt, ...) {
+    char *valBuf;
+    size_t valLen;
+    va_list ap;
+    EcoRes res;
+
+    va_start(ap, fmt);
+    valLen = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+
+    valBuf = (char *)malloc(valLen + 1);
+    if (valBuf == NULL) {
+        return EcoRes_NoMem;
+    }
+
+    va_start(ap, fmt);
+    vsnprintf(valBuf, valLen + 1, fmt, ap);
+    va_end(ap);
+
+    res = EcoHdrTab_Add(tab, key, valBuf);
+    if (res != EcoRes_Ok) {
+        free(valBuf);
+
+        return res;
+    }
+
+    return EcoRes_Ok;
 }
 
 EcoRes EcoHdrTab_Drop(EcoHdrTab *tab, const char *key) {
@@ -574,8 +604,10 @@ void EcoHttpCli_Init(EcoHttpCli *cli) {
     cli->chanSetOptHook = NULL;
     cli->chanReadHook = NULL;
     cli->chanWriteHook = NULL;
-    cli->hdrHookArg = NULL;
-    cli->hdrWriteHook = NULL;
+    cli->reqHdrHookArg = NULL;
+    cli->reqHdrHook = NULL;
+    cli->rspHdrHookArg = NULL;
+    cli->rspHdrHook = NULL;
     cli->bodyHookArg = NULL;
     cli->bodyWriteHook = NULL;
     cli->req = NULL;
@@ -648,12 +680,20 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
         cli->chanWriteHook = (EcoChanWriteHook)arg;
         break;
 
-    case EcoOpt_HdrHookArg:
-        cli->hdrHookArg = arg;
+    case EcoOpt_ReqHdrHookArg:
+        cli->reqHdrHookArg = arg;
         break;
 
-    case EcoOpt_HdrWriteHook:
-        cli->hdrWriteHook = (EcoHdrWriteHook)arg;
+    case EcoOpt_ReqHdrHook:
+        cli->reqHdrHook = (EcoReqHdrHook)arg;
+        break;
+
+    case EcoOpt_RspHdrHookArg:
+        cli->rspHdrHookArg = arg;
+        break;
+
+    case EcoOpt_RspHdrHook:
+        cli->rspHdrHook = (EcoRspHdrHook)arg;
         break;
 
     case EcoOpt_BodyHookArg:
@@ -673,6 +713,33 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
 
     default:
         return EcoRes_BadOpt;
+    }
+
+    return EcoRes_Ok;
+}
+
+EcoRes EcoCli_AutoGenHdrs(EcoHttpCli *cli) {
+    EcoHttpReq *req = cli->req;
+    EcoChanAddr *chanAddr = &req->chanAddr;
+    EcoRes res;
+
+    res = EcoHdrTab_Find(req->hdrTab, "host", NULL);
+    if (res == EcoRes_NotFound) {
+        res = EcoHdrTab_AddFmt(req->hdrTab, "host", "%u.%u.%u.%u:%u",
+                               chanAddr->addr[0], chanAddr->addr[1],
+                               chanAddr->addr[2], chanAddr->addr[3],
+                               chanAddr->port);
+        if (res != EcoRes_Ok) {
+            return res;
+        }
+    }
+
+    res = EcoHdrTab_Find(req->hdrTab, "content-length", NULL);
+    if (res == EcoRes_NotFound) {
+        res = EcoHdrTab_AddFmt(req->hdrTab, "content-length", "%zu", req->bodyLen);
+        if (res != EcoRes_Ok) {
+            return res;
+        }
     }
 
     return EcoRes_Ok;
@@ -1396,14 +1463,14 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
                 /* If the current byte is CR character, then
                    it may reach the end of the header line. */
                 if (byte == '\r') {
-                    if (cli->hdrWriteHook != NULL) {
+                    if (cli->rspHdrHook != NULL) {
                         for (size_t i = 0; i < cli->rsp->hdrTab->kvpNum; i++) {
                             EcoKvp *curKvp = cli->rsp->hdrTab->kvpAry + i;
 
-                            res = cli->hdrWriteHook(cli->rsp->hdrTab->kvpNum, i,
-                                                    curKvp->keyBuf, curKvp->keyLen,
-                                                    curKvp->valBuf, curKvp->valLen,
-                                                    cli->hdrHookArg);
+                            res = cli->rspHdrHook(cli->rsp->hdrTab->kvpNum, i,
+                                                  curKvp->keyBuf, curKvp->keyLen,
+                                                  curKvp->valBuf, curKvp->valLen,
+                                                  cli->rspHdrHookArg);
                             if (res != EcoRes_Ok) {
                                 return res;
                             }
@@ -1525,6 +1592,31 @@ EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
         cli->chanReadHook == NULL ||
         cli->chanWriteHook == NULL) {
         return EcoRes_NoChanHook;
+    }
+
+    if (cli->req == NULL) {
+        return EcoRes_NoReq;
+    }
+
+    /* Automatically generate necessary headers. */
+    res = EcoCli_AutoGenHdrs(cli);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    /* Call the request header getting hook. */
+    if (cli->reqHdrHook != NULL) {
+        for (size_t i = 0; i < cli->req->hdrTab->kvpNum; i++) {
+            EcoKvp *curKvp = cli->req->hdrTab->kvpAry + i;
+
+            res = cli->reqHdrHook(cli->req->hdrTab->kvpNum, i,
+                                  curKvp->keyBuf, curKvp->keyLen,
+                                  curKvp->valBuf, curKvp->valLen,
+                                  cli->rspHdrHookArg);
+            if (res != EcoRes_Ok) {
+                return res;
+            }
+        }
     }
 
     /* Set channel address. */

@@ -35,6 +35,10 @@ typedef enum _EcoRes {
     EcoRes_TooSmall         = -21,
 
     EcoRes_TooBig           = -22,
+
+    EcoRes_NoReq            = -23,
+
+    EcoRes_NoRsp            = -24,
 } EcoRes;
 
 typedef enum _EcoHttpVer {
@@ -72,8 +76,10 @@ typedef enum _EcoOpt {
     EcoOpt_ChanSetOptHook,
     EcoOpt_ChanReadHook,
     EcoOpt_ChanWriteHook,
-    EcoOpt_HdrHookArg,
-    EcoOpt_HdrWriteHook,
+    EcoOpt_ReqHdrHookArg,
+    EcoOpt_ReqHdrHook,
+    EcoOpt_RspHdrHookArg,
+    EcoOpt_RspHdrHook,
     EcoOpt_BodyHookArg,
     EcoOpt_BodyWriteHook,
     EcoOpt_Request,
@@ -124,6 +130,15 @@ void EcoHdrTab_Del(EcoHdrTab *tab);
  * @param val Value string.
  */
 EcoRes EcoHdrTab_Add(EcoHdrTab *tab, const char *key, const char *val);
+
+/**
+ * @brief Add a key-value pair to the header table with format string.
+ * 
+ * @param tab Header table.
+ * @param key Key string.
+ * @param fmt Format string for value.
+ */
+EcoRes EcoHdrTab_AddFmt(EcoHdrTab *tab, const char *key, const char *fmt, ...);
 
 /**
  * @brief Drop a key-value pair from the header table.
@@ -254,7 +269,7 @@ typedef int (*EcoChanWriteHook)(const void *buf, int len, EcoArg arg);
 
 
 /**
- * @brief User defined header write hook function.
+ * @brief User defined request header getting hook function.
  * 
  * @param hdrNum Total number of headers to write.
  * @param hdrIdx Index of the current header.
@@ -262,15 +277,36 @@ typedef int (*EcoChanWriteHook)(const void *buf, int len, EcoArg arg);
  * @param keyLen Header key length.
  * @param valBuf Header value buffer.
  * @param valLen Header value length.
- * @param arg Extra user data which can be set by option `EcoOpt_HdrHookArg`.
+ * @param arg Extra user data which can be set by option `EcoOpt_ReqHdrHookArg`.
  * 
  * @return `EcoRes_Ok` for success.
  *         Negative numbers represent corresponding errors.
  */
-typedef EcoRes (*EcoHdrWriteHook)(size_t hdrNum, size_t hdrIdx,
-                                  const char *keyBuf, size_t keyLen,
-                                  const char *valBuf, size_t valLen,
-                                  EcoArg arg);
+typedef EcoRes (*EcoReqHdrHook)(size_t hdrNum, size_t hdrIdx,
+                                const char *keyBuf, size_t keyLen,
+                                const char *valBuf, size_t valLen,
+                                EcoArg arg);
+
+
+
+/**
+ * @brief User defined response header getting hook function.
+ * 
+ * @param hdrNum Total number of headers to write.
+ * @param hdrIdx Index of the current header.
+ * @param keyBuf Header key buffer.
+ * @param keyLen Header key length.
+ * @param valBuf Header value buffer.
+ * @param valLen Header value length.
+ * @param arg Extra user data which can be set by option `EcoOpt_RspHdrHookArg`.
+ * 
+ * @return `EcoRes_Ok` for success.
+ *         Negative numbers represent corresponding errors.
+ */
+typedef EcoRes (*EcoRspHdrHook)(size_t hdrNum, size_t hdrIdx,
+                                const char *keyBuf, size_t keyLen,
+                                const char *valBuf, size_t valLen,
+                                EcoArg arg);
 
 
 
@@ -299,8 +335,10 @@ typedef struct _EcoHttpCli {
     EcoChanSetOptHook chanSetOptHook;
     EcoChanReadHook chanReadHook;
     EcoChanWriteHook chanWriteHook;
-    EcoArg hdrHookArg;
-    EcoHdrWriteHook hdrWriteHook;
+    EcoArg reqHdrHookArg;
+    EcoRspHdrHook reqHdrHook;
+    EcoArg rspHdrHookArg;
+    EcoRspHdrHook rspHdrHook;
     EcoArg bodyHookArg;
     EcoBodyWriteHook bodyWriteHook;
     EcoHttpReq *req;
