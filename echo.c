@@ -26,6 +26,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <strings.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdarg.h>
@@ -637,6 +638,7 @@ void EcoHttpRsp_Init(EcoHttpRsp *rsp) {
     rsp->ver = EcoHttpVer_Unknown;
     rsp->statCode = EcoStatCode_Unknown;
     rsp->hdrTab = NULL;
+    rsp->contLen = 0;
     rsp->bodyBuf = NULL;
     rsp->bodyLen = 0;
 }
@@ -662,6 +664,8 @@ void EcoHttpRsp_Deinit(EcoHttpRsp *rsp) {
         EcoHdrTab_Del(rsp->hdrTab);
         rsp->hdrTab = NULL;
     }
+
+    rsp->contLen = 0;
 
     if (rsp->bodyBuf != NULL) {
         free(rsp->bodyBuf);
@@ -897,7 +901,7 @@ static void EcoCli_CapRspHdrKey(EcoHttpCli *cli) {
     }
 }
 
-#define ECO_SND_CACHE_BUF_LEN   128
+#define ECO_SND_CACHE_BUF_LEN   512
 
 typedef struct _SendCache {
     uint8_t datBuf[ECO_SND_CACHE_BUF_LEN];
@@ -1678,6 +1682,7 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
                 }
 
                 if (res == EcoRes_Ok) {
+                    cli->rsp->contLen = cache.contLen;
 
                     /* If the current method is HEAD. */
                     if (cli->req->meth == EcoHttpMeth_Head) {

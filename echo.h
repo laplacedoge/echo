@@ -245,6 +245,7 @@ typedef struct _EcoHttpRsp {
     EcoHttpVer ver;
     EcoStatCode statCode;
     EcoHdrTab *hdrTab;
+    size_t contLen;
     uint8_t *bodyBuf;
     size_t bodyLen;
 } EcoHttpRsp;
