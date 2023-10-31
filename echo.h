@@ -212,6 +212,8 @@ typedef struct _EcoHttpReq {
     EcoChanAddr chanAddr;
     EcoHttpVer ver;
     EcoHdrTab *hdrTab;
+
+    /* Body field is not dynamicly allocated. */
     uint8_t *bodyBuf;
     size_t bodyLen;
 } EcoHttpReq;
@@ -234,6 +236,7 @@ typedef enum _EcoStatCode {
     EcoStatCode_Ok                  = 200,
     EcoStatCode_PartialContent      = 206,
     EcoStatCode_BadRequest          = 400,
+    EcoStatCode_Unauthorized        = 401,
     EcoStatCode_NotFound            = 404,
     EcoStatCode_ServerError         = 500,
 } EcoStatCode;

@@ -340,11 +340,7 @@ void EcoHttpReq_Deinit(EcoHttpReq *req) {
         req->hdrTab = NULL;
     }
 
-    if (req->bodyBuf != NULL) {
-        free(req->bodyBuf);
-        req->bodyBuf = NULL;
-    }
-
+    req->bodyBuf = NULL;
     req->bodyLen = 0;
 }
 
@@ -607,9 +603,6 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
         break;
 
     case EcoOpt_BodyBuf:
-        if (req->bodyBuf != NULL) {
-            free(req->bodyBuf);
-        }
         req->bodyBuf = (uint8_t *)arg;
         break;
 
@@ -795,9 +788,11 @@ EcoRes EcoCli_AutoGenHdrs(EcoHttpCli *cli) {
     EcoRes res;
 
     /* If request header table is not created yet, create it. */
-    req->hdrTab = EcoHdrTab_New();
     if (req->hdrTab == NULL) {
-        return EcoRes_NoMem;
+        req->hdrTab = EcoHdrTab_New();
+        if (req->hdrTab == NULL) {
+            return EcoRes_NoMem;
+        }
     }
 
     res = EcoHdrTab_Find(req->hdrTab, "host", NULL);
@@ -1264,6 +1259,7 @@ static EcoStatCode EcoStatCode_FromNum(uint32_t statCode) {
     case EcoStatCode_Ok: return EcoStatCode_Ok;
     case EcoStatCode_PartialContent: return EcoStatCode_PartialContent;
     case EcoStatCode_BadRequest: return EcoStatCode_BadRequest;
+    case EcoStatCode_Unauthorized: return EcoStatCode_Unauthorized;
     case EcoStatCode_NotFound: return EcoStatCode_NotFound;
     case EcoStatCode_ServerError: return EcoStatCode_ServerError;
     default: return EcoStatCode_Unknown;
@@ -1529,14 +1525,7 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
                     }
 
                     cli->rsp->ver = ver;
-
-                    /* Validate the HTTP status code. */
-                    code = EcoStatCode_FromNum(cache.statCode);
-                    if (code == EcoStatCode_Unknown) {
-                        return EcoRes_BadStatCode;
-                    }
-
-                    cli->rsp->statCode = code;
+                    cli->rsp->statCode = cache.statCode;
 
                     cache.rspMsgFsmStat = FsmStat_HdrLine;
                 }
