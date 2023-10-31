@@ -79,6 +79,7 @@ typedef enum _EcoHttpMeth {
     EcoHttpMeth_Get,
     EcoHttpMeth_Post,
     EcoHttpMeth_Head,
+    EcoHttpMeth_Put,
 } EcoHttpMeth;
 
 #define ECO_DEF_HTTP_METH   EcoHttpMeth_Get

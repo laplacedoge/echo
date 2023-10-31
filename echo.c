@@ -62,6 +62,7 @@ const char *EcoHttpMeth_ToStr(EcoHttpMeth meth) {
     case EcoHttpMeth_Get: return "GET";
     case EcoHttpMeth_Post: return "POST";
     case EcoHttpMeth_Head: return "HEAD";
+    case EcoHttpMeth_Put: return "PUT";
     default: return "GET";
     }
 }
