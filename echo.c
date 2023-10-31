@@ -131,6 +131,20 @@ void EcoHdrTab_Del(EcoHdrTab *tab) {
     free(tab);
 }
 
+/**
+ * @brief Convert header key to lowercase.
+ */
+static void ConvHdrKeyToLowercase(char *keyBuf, size_t keyLen) {
+    for (size_t i = 0; i < keyLen; i++) {
+        char ch = keyBuf[i];
+
+        if (ch >= 'A' &&
+            ch <= 'Z') {
+            keyBuf[i] = ch - 'A' + 'a';
+        }
+    }
+}
+
 EcoRes EcoHdrTab_Add(EcoHdrTab *tab, const char *key, const char *val) {
     EcoKvp *curKvp;
 
@@ -181,6 +195,8 @@ EcoRes EcoHdrTab_Add(EcoHdrTab *tab, const char *key, const char *val) {
 
         memcpy(keyBuf, key, keyLen + 1);
         memcpy(valBuf, val, valLen + 1);
+
+        ConvHdrKeyToLowercase(keyBuf, keyLen);
 
         keyHash = EcoHash_HashKey(keyBuf);
 
@@ -782,7 +798,7 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
     return EcoRes_Ok;
 }
 
-EcoRes EcoCli_AutoGenHdrs(EcoHttpCli *cli) {
+static EcoRes EcoCli_AutoGenHdrs(EcoHttpCli *cli) {
     EcoHttpReq *req = cli->req;
     EcoChanAddr *chanAddr = &req->chanAddr;
     EcoRes res;
@@ -823,6 +839,62 @@ EcoRes EcoCli_AutoGenHdrs(EcoHttpCli *cli) {
     }
 
     return EcoRes_Ok;
+}
+
+/**
+ * @brief Capitalize the first letter of each word in the header key.
+ */
+static void CapHdrKey(char *keyBuf, size_t keyLen) {
+    bool capNextCh = true;
+
+    for (size_t i = 0; i < keyLen; i++) {
+        char ch = keyBuf[i];
+
+        if (ch >= 'a' &&
+            ch <= 'z') {
+            if (capNextCh) {
+                capNextCh = false;
+
+                keyBuf[i] = ch - 'a' + 'A';
+            }
+        } else if (ch >= 'A' && ch <= 'Z') {
+            if (capNextCh == false) {
+                keyBuf[i] = ch - 'A' + 'a';
+            }
+        } else {
+            if (capNextCh == false) {
+                capNextCh = true;
+            }
+        }
+    }
+}
+
+static void EcoCli_CapReqHdrKey(EcoHttpCli *cli) {
+    EcoHttpReq *req = cli->req;
+
+    if (req == NULL || req->hdrTab == NULL) {
+        return;
+    }
+
+    for (size_t i = 0; i < req->hdrTab->kvpNum; i++) {
+        EcoKvp *curKvp = req->hdrTab->kvpAry + i;
+        
+        CapHdrKey(curKvp->keyBuf, curKvp->keyLen);
+    }
+}
+
+static void EcoCli_CapRspHdrKey(EcoHttpCli *cli) {
+    EcoHttpRsp *rsp = cli->rsp;
+
+    if (rsp == NULL || rsp->hdrTab == NULL) {
+        return;
+    }
+
+    for (size_t i = 0; i < rsp->hdrTab->kvpNum; i++) {
+        EcoKvp *curKvp = rsp->hdrTab->kvpAry + i;
+        
+        CapHdrKey(curKvp->keyBuf, curKvp->keyLen);
+    }
 }
 
 #define ECO_SND_CACHE_BUF_LEN   128
@@ -1540,6 +1612,11 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
                 /* If the current byte is CR character, then
                    it may reach the end of the header line. */
                 if (byte == '\r') {
+
+                    /* Capitalize the first letter of the response header key. */
+                    EcoCli_CapRspHdrKey(cli);
+
+                    /* Call response header getting hook function. */
                     if (cli->rspHdrHook != NULL) {
                         for (size_t i = 0; i < cli->rsp->hdrTab->kvpNum; i++) {
                             EcoKvp *curKvp = cli->rsp->hdrTab->kvpAry + i;
@@ -1722,6 +1799,9 @@ EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
     if (res != EcoRes_Ok) {
         return res;
     }
+
+    /* Capitalize the first letter of the request header key. */
+    EcoCli_CapReqHdrKey(cli);
 
     /* Call the request header getting hook. */
     if (cli->reqHdrHook != NULL) {
