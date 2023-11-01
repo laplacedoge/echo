@@ -542,9 +542,9 @@ EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
     return EcoRes_Ok;
 }
 
-EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
+EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg) {
     switch (opt) {
-    case EcoOpt_Url: {
+    case EcoHttpReqOpt_Url: {
         EcoUrlDsc urlDsc;
         EcoRes res;
 
@@ -572,15 +572,15 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
         break;
     }
 
-    case EcoOpt_Addr:
+    case EcoHttpReqOpt_Addr:
         memcpy(req->chanAddr.addr, (uint8_t *)arg, 4);
         break;
 
-    case EcoOpt_Port:
+    case EcoHttpReqOpt_Port:
         req->chanAddr.port = (uint16_t)arg;
         break;
 
-    case EcoOpt_Path: {
+    case EcoHttpReqOpt_Path: {
         char *pathBuf = (char *)arg;
         size_t pathLen = strlen(pathBuf);
 
@@ -603,26 +603,26 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg) {
         break;
     }
 
-    case EcoOpt_Method:
+    case EcoHttpReqOpt_Method:
         req->meth = (EcoHttpMeth)arg;
         break;
 
-    case EcoOpt_Verion:
+    case EcoHttpReqOpt_Verion:
         req->ver = (EcoHttpVer)arg;
         break;
 
-    case EcoOpt_Headers:
+    case EcoHttpReqOpt_Headers:
         if (req->hdrTab != NULL) {
             EcoHdrTab_Del(req->hdrTab);
         }
         req->hdrTab = (EcoHdrTab *)arg;
         break;
 
-    case EcoOpt_BodyBuf:
+    case EcoHttpReqOpt_BodyBuf:
         req->bodyBuf = (uint8_t *)arg;
         break;
 
-    case EcoOpt_BodyLen:
+    case EcoHttpReqOpt_BodyLen:
         req->bodyLen = (size_t)arg;
         break;
 
@@ -749,57 +749,57 @@ void EcoHttpCli_Del(EcoHttpCli *cli) {
     free(cli);
 }
 
-EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg) {
+EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoHttpCliOpt opt, EcoArg arg) {
     switch (opt) {
-    case EcoOpt_ChanHookArg:
+    case EcoHttpCliOpt_ChanHookArg:
         cli->chanHookArg = arg;
         break;
 
-    case EcoOpt_ChanOpenHook:
+    case EcoHttpCliOpt_ChanOpenHook:
         cli->chanOpenHook = (EcoChanOpenHook)arg;
         break;
 
-    case EcoOpt_ChanCloseHook:
+    case EcoHttpCliOpt_ChanCloseHook:
         cli->chanCloseHook = (EcoChanCloseHook)arg;
         break;
 
-    case EcoOpt_ChanSetOptHook:
+    case EcoHttpCliOpt_ChanSetOptHook:
         cli->chanSetOptHook = (EcoChanSetOptHook)arg;
         break;
 
-    case EcoOpt_ChanReadHook:
+    case EcoHttpCliOpt_ChanReadHook:
         cli->chanReadHook = (EcoChanReadHook)arg;
         break;
 
-    case EcoOpt_ChanWriteHook:
+    case EcoHttpCliOpt_ChanWriteHook:
         cli->chanWriteHook = (EcoChanWriteHook)arg;
         break;
 
-    case EcoOpt_ReqHdrHookArg:
+    case EcoHttpCliOpt_ReqHdrHookArg:
         cli->reqHdrHookArg = arg;
         break;
 
-    case EcoOpt_ReqHdrHook:
+    case EcoHttpCliOpt_ReqHdrHook:
         cli->reqHdrHook = (EcoReqHdrHook)arg;
         break;
 
-    case EcoOpt_RspHdrHookArg:
+    case EcoHttpCliOpt_RspHdrHookArg:
         cli->rspHdrHookArg = arg;
         break;
 
-    case EcoOpt_RspHdrHook:
+    case EcoHttpCliOpt_RspHdrHook:
         cli->rspHdrHook = (EcoRspHdrHook)arg;
         break;
 
-    case EcoOpt_BodyHookArg:
+    case EcoHttpCliOpt_BodyHookArg:
         cli->bodyHookArg = arg;
         break;
 
-    case EcoOpt_BodyWriteHook:
+    case EcoHttpCliOpt_BodyWriteHook:
         cli->bodyWriteHook = (EcoBodyWriteHook)arg;
         break;
 
-    case EcoOpt_Request:
+    case EcoHttpCliOpt_Request:
         if (cli->req != NULL) {
             EcoHttpReq_Del(cli->req);
         }

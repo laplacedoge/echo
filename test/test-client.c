@@ -13,39 +13,39 @@ void TestSetClientParam(void) {
     cli = EcoHttpCli_New();
     assert(cli != NULL);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanHookArg, NULL);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanHookArg, NULL);
     assert(res == EcoRes_Ok);
     assert(cli->chanHookArg == NULL);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanOpenHook, NULL);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanOpenHook, NULL);
     assert(res == EcoRes_Ok);
     assert(cli->chanOpenHook == NULL);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanCloseHook, NULL);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanCloseHook, NULL);
     assert(res == EcoRes_Ok);
     assert(cli->chanCloseHook == NULL);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanSetOptHook, NULL);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanSetOptHook, NULL);
     assert(res == EcoRes_Ok);
     assert(cli->chanSetOptHook == NULL);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanReadHook, NULL);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanReadHook, NULL);
     assert(res == EcoRes_Ok);
     assert(cli->chanReadHook == NULL);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanWriteHook, NULL);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanWriteHook, NULL);
     assert(res == EcoRes_Ok);
     assert(cli->chanWriteHook == NULL);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_Request, NULL);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_Request, NULL);
     assert(res == EcoRes_Ok);
     assert(cli->req == NULL);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_BodyHookArg, NULL);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_BodyHookArg, NULL);
     assert(res == EcoRes_Ok);
     assert(cli->bodyHookArg == NULL);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_BodyWriteHook, NULL);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_BodyWriteHook, NULL);
     assert(res == EcoRes_Ok);
     assert(cli->bodyWriteHook == NULL);
 

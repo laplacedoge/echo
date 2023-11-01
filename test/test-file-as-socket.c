@@ -119,16 +119,16 @@ int main(int argc, char *argv[]) {
     req = EcoHttpReq_New();
     assert(req != NULL);
 
-    res = EcoHttpReq_SetOpt(req, EcoOpt_Url, "192.168.8.72:8080/api/3/query-status?name=hello&age=18");
+    res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Url, "192.168.8.72:8080/api/3/query-status?name=hello&age=18");
     assert(res == EcoRes_Ok);
     assert(memcmp(req->chanAddr.addr, (uint8_t [4]){192, 168, 8, 72}, 4) == 0);
     assert(req->chanAddr.port == 8080);
 
-    res = EcoHttpReq_SetOpt(req, EcoOpt_Verion, (EcoArg)EcoHttpVer_1_1);
+    res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Verion, (EcoArg)EcoHttpVer_1_1);
     assert(res == EcoRes_Ok);
     assert(req->ver == EcoHttpVer_1_1);
 
-    res = EcoHttpReq_SetOpt(req, EcoOpt_Method, (EcoArg)EcoHttpMeth_Get);
+    res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Method, (EcoArg)EcoHttpMeth_Get);
     assert(res == EcoRes_Ok);
     assert(req->meth == EcoHttpMeth_Get);
 
@@ -148,7 +148,7 @@ int main(int argc, char *argv[]) {
     assert(tab->kvpNum == 3);
 
     /* Set HTTP header field of HTTP request. */
-    res = EcoHttpReq_SetOpt(req, EcoOpt_Headers, (EcoArg)tab);
+    res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Headers, (EcoArg)tab);
     assert(res == EcoRes_Ok);
 
     /* Create HTTP client. */
@@ -156,27 +156,27 @@ int main(int argc, char *argv[]) {
     assert(cli != NULL);
 
     /* Set channel hook functions of HTTP client. */
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanHookArg, &fileFd);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanHookArg, &fileFd);
     assert(res == EcoRes_Ok);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanOpenHook, ecoChanOpenHook);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanOpenHook, ecoChanOpenHook);
     assert(res == EcoRes_Ok);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanCloseHook, ecoChanCloseHook);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanCloseHook, ecoChanCloseHook);
     assert(res == EcoRes_Ok);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanReadHook, ecoChanReadHook);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanReadHook, ecoChanReadHook);
     assert(res == EcoRes_Ok);
 
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_ChanWriteHook, ecoChanWriteHook);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanWriteHook, ecoChanWriteHook);
     assert(res == EcoRes_Ok);
 
     /* Set body write hook function of HTTP client. */
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_BodyWriteHook, ecoBodyWriteHook);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_BodyWriteHook, ecoBodyWriteHook);
     assert(res == EcoRes_Ok);
 
     /* Set HTTP request of HTTP client. */
-    res = EcoHttpCli_SetOpt(cli, EcoOpt_Request, req);
+    res = EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_Request, req);
     assert(res == EcoRes_Ok);
 
     /* Issue HTTP request. */

@@ -84,34 +84,33 @@ typedef enum _EcoHttpMeth {
 
 #define ECO_DEF_HTTP_METH   EcoHttpMeth_Get
 
-typedef enum _EcoOpt {
+typedef enum _EcoHttpReqOpt {
+    EcoHttpReqOpt_Url,
+    EcoHttpReqOpt_Addr,
+    EcoHttpReqOpt_Port,
+    EcoHttpReqOpt_Path,
+    EcoHttpReqOpt_Method,
+    EcoHttpReqOpt_Verion,
+    EcoHttpReqOpt_Headers,
+    EcoHttpReqOpt_BodyBuf,
+    EcoHttpReqOpt_BodyLen,
+} EcoHttpReqOpt;
 
-    /* Options for HTTP request. */
-    EcoOpt_Url,
-    EcoOpt_Addr,
-    EcoOpt_Port,
-    EcoOpt_Path,
-    EcoOpt_Method,
-    EcoOpt_Verion,
-    EcoOpt_Headers,
-    EcoOpt_BodyBuf,
-    EcoOpt_BodyLen,
-
-    /* Options for HTTP client. */
-    EcoOpt_ChanHookArg,
-    EcoOpt_ChanOpenHook,
-    EcoOpt_ChanCloseHook,
-    EcoOpt_ChanSetOptHook,
-    EcoOpt_ChanReadHook,
-    EcoOpt_ChanWriteHook,
-    EcoOpt_ReqHdrHookArg,
-    EcoOpt_ReqHdrHook,
-    EcoOpt_RspHdrHookArg,
-    EcoOpt_RspHdrHook,
-    EcoOpt_BodyHookArg,
-    EcoOpt_BodyWriteHook,
-    EcoOpt_Request,
-} EcoOpt;
+typedef enum _EcoHttpCliOpt {
+    EcoHttpCliOpt_ChanHookArg,
+    EcoHttpCliOpt_ChanOpenHook,
+    EcoHttpCliOpt_ChanCloseHook,
+    EcoHttpCliOpt_ChanSetOptHook,
+    EcoHttpCliOpt_ChanReadHook,
+    EcoHttpCliOpt_ChanWriteHook,
+    EcoHttpCliOpt_ReqHdrHookArg,
+    EcoHttpCliOpt_ReqHdrHook,
+    EcoHttpCliOpt_RspHdrHookArg,
+    EcoHttpCliOpt_RspHdrHook,
+    EcoHttpCliOpt_BodyHookArg,
+    EcoHttpCliOpt_BodyWriteHook,
+    EcoHttpCliOpt_Request,
+} EcoHttpCliOpt;
 
 
 
@@ -226,7 +225,7 @@ void EcoHttpReq_Deinit(EcoHttpReq *req);
 
 void EcoHttpReq_Del(EcoHttpReq *req);
 
-EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoOpt opt, EcoArg arg);
+EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg);
 
 
 
@@ -390,6 +389,6 @@ void EcoHttpCli_Deinit(EcoHttpCli *cli);
 
 void EcoHttpCli_Del(EcoHttpCli *cli);
 
-EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoOpt opt, EcoArg arg);
+EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoHttpCliOpt opt, EcoArg arg);
 
 EcoRes EcoHttpCli_Issue(EcoHttpCli *cli);
