@@ -23,6 +23,7 @@
  */
 
 #include <stdbool.h>
+#include <strings.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -77,13 +78,24 @@ void EcoHttpRsp_Del(EcoHttpRsp *cli);
 #define KVP_ARY_INIT_CAP    8
 
 static uint32_t EcoHash_HashKey(const char *str) {
+    uint8_t *ptr = (uint8_t *)str;
     uint32_t hash = 5381;
-    int c;
+    uint8_t byte;
 
-    while ((c = *str++)) {
+    while (true) {
+        byte = *ptr;
+        if (byte == '\0') {
+            break;
+        }
 
-        /* hash * 33 + c */
-        hash = ((hash << 5) + hash) + c;
+        if (byte >= 'A' &&
+            byte <= 'Z') {
+            byte = byte - 'A' + 'a';
+        }
+
+        hash = ((hash << 5) + hash) + byte;
+
+        ptr++;
     }
 
     return hash;
@@ -301,7 +313,7 @@ EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp **kvp) {
 
         if (keyHash == curKvp->keyHash &&
             keyLen == curKvp->keyLen &&
-            memcmp(keyBuf, curKvp->keyBuf, keyLen) == 0) {
+            strcasecmp(keyBuf, curKvp->keyBuf) == 0) {
             if (kvp != NULL) {
                 *kvp = curKvp;
             }
