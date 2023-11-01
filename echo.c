@@ -26,7 +26,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <strings.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdarg.h>
@@ -694,6 +693,9 @@ void EcoHttpCli_Init(EcoHttpCli *cli) {
     cli->rspHdrHook = NULL;
     cli->bodyHookArg = NULL;
     cli->bodyWriteHook = NULL;
+
+    cli->chanOpened = false;
+
     cli->req = NULL;
     cli->rsp = NULL;
 }
@@ -712,6 +714,13 @@ EcoHttpCli *EcoHttpCli_New(void) {
 }
 
 void EcoHttpCli_Deinit(EcoHttpCli *cli) {
+
+    /* If channel has been opened, close it. */
+    if (cli->chanCloseHook != NULL &&
+        cli->chanOpened) {
+        cli->chanCloseHook(cli->chanHookArg);
+    }
+
     cli->chanHookArg = NULL;
     cli->chanOpenHook = NULL;
     cli->chanCloseHook = NULL;
@@ -720,6 +729,8 @@ void EcoHttpCli_Deinit(EcoHttpCli *cli) {
     cli->chanWriteHook = NULL;
     cli->bodyHookArg = NULL;
     cli->bodyWriteHook = NULL;
+
+    cli->chanOpened = false;
 
     if (cli->req != NULL) {
         EcoHttpReq_Del(cli->req);
@@ -1833,22 +1844,31 @@ EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
         return res;
     }
 
+    if (cli->chanOpened == false) {
+        cli->chanOpened = true;
+    }
+
     /* Send HTTP request. */
     res = EcoCli_SendReqMsg(cli);
     if (res != EcoRes_Ok) {
-        return res;
+        goto CloseChan;
     }
 
     res = EcoCli_ParseRspMsg(cli);
     if (res != EcoRes_Ok) {
-        return res;
+        goto CloseChan;
     }
+
+    res = EcoRes_Ok;
+
+CloseChan:
 
     /* Close channel. */
-    res = cli->chanCloseHook(cli->chanHookArg);
-    if (res != EcoRes_Ok) {
-        return res;
+    cli->chanCloseHook(cli->chanHookArg);
+
+    if (cli->chanOpened) {
+        cli->chanOpened = false;
     }
 
-    return EcoRes_Ok;
+    return res;
 }

@@ -374,6 +374,10 @@ typedef struct _EcoHttpCli {
     EcoRspHdrHook rspHdrHook;
     EcoArg bodyHookArg;
     EcoBodyWriteHook bodyWriteHook;
+
+    /* Flags. */
+    uint32_t chanOpened: 1;
+
     EcoHttpReq *req;
     EcoHttpRsp *rsp;
 } EcoHttpCli;
