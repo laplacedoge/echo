@@ -109,6 +109,7 @@ typedef enum _EcoHttpCliOpt {
     EcoHttpCliOpt_RspHdrHook,
     EcoHttpCliOpt_BodyHookArg,
     EcoHttpCliOpt_BodyWriteHook,
+    EcoHttpCliOpt_KeepAlive,
     EcoHttpCliOpt_Request,
 } EcoHttpCliOpt;
 
@@ -376,6 +377,7 @@ typedef struct _EcoHttpCli {
 
     /* Flags. */
     uint32_t chanOpened: 1;
+    uint32_t keepAlive: 1;
 
     EcoHttpReq *req;
     EcoHttpRsp *rsp;

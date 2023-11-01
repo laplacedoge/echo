@@ -134,7 +134,7 @@ void EcoHdrTab_Del(EcoHdrTab *tab) {
 /**
  * @brief Convert header key to lowercase.
  */
-static void ConvHdrKeyToLowercase(char *keyBuf, size_t keyLen) {
+static void LowHdrKey(char *keyBuf, size_t keyLen) {
     for (size_t i = 0; i < keyLen; i++) {
         char ch = keyBuf[i];
 
@@ -196,7 +196,7 @@ EcoRes EcoHdrTab_Add(EcoHdrTab *tab, const char *key, const char *val) {
         memcpy(keyBuf, key, keyLen + 1);
         memcpy(valBuf, val, valLen + 1);
 
-        ConvHdrKeyToLowercase(keyBuf, keyLen);
+        LowHdrKey(keyBuf, keyLen);
 
         keyHash = EcoHash_HashKey(keyBuf);
 
@@ -577,7 +577,7 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg) {
         break;
 
     case EcoHttpReqOpt_Port:
-        req->chanAddr.port = (uint16_t)arg;
+        req->chanAddr.port = (uint16_t)(size_t)arg;
         break;
 
     case EcoHttpReqOpt_Path: {
@@ -604,11 +604,11 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg) {
     }
 
     case EcoHttpReqOpt_Method:
-        req->meth = (EcoHttpMeth)arg;
+        req->meth = (EcoHttpMeth)(size_t)arg;
         break;
 
     case EcoHttpReqOpt_Verion:
-        req->ver = (EcoHttpVer)arg;
+        req->ver = (EcoHttpVer)(size_t)arg;
         break;
 
     case EcoHttpReqOpt_Headers:
@@ -695,6 +695,7 @@ void EcoHttpCli_Init(EcoHttpCli *cli) {
     cli->bodyWriteHook = NULL;
 
     cli->chanOpened = false;
+    cli->keepAlive = false;
 
     cli->req = NULL;
     cli->rsp = NULL;
@@ -731,6 +732,7 @@ void EcoHttpCli_Deinit(EcoHttpCli *cli) {
     cli->bodyWriteHook = NULL;
 
     cli->chanOpened = false;
+    cli->keepAlive = false;
 
     if (cli->req != NULL) {
         EcoHttpReq_Del(cli->req);
@@ -799,6 +801,10 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoHttpCliOpt opt, EcoArg arg) {
         cli->bodyWriteHook = (EcoBodyWriteHook)arg;
         break;
 
+    case EcoHttpCliOpt_KeepAlive:
+        cli->keepAlive = (size_t)arg ? true : false;
+        break;
+
     case EcoHttpCliOpt_Request:
         if (cli->req != NULL) {
             EcoHttpReq_Del(cli->req);
@@ -853,6 +859,15 @@ static EcoRes EcoCli_AutoGenHdrs(EcoHttpCli *cli) {
         }
     }
 
+    /* If keep-alive is enabled, make sure request
+       has `Connection: keep-alive` header. */
+    if (cli->keepAlive) {
+        res = EcoHdrTab_Add(req->hdrTab, "connection", "keep-alive");
+        if (res != EcoRes_Ok) {
+            return res;
+        }
+    }
+
     return EcoRes_Ok;
 }
 
@@ -893,7 +908,7 @@ static void EcoCli_CapReqHdrKey(EcoHttpCli *cli) {
 
     for (size_t i = 0; i < req->hdrTab->kvpNum; i++) {
         EcoKvp *curKvp = req->hdrTab->kvpAry + i;
-        
+
         CapHdrKey(curKvp->keyBuf, curKvp->keyLen);
     }
 }
@@ -909,6 +924,20 @@ static void EcoCli_CapRspHdrKey(EcoHttpCli *cli) {
         EcoKvp *curKvp = rsp->hdrTab->kvpAry + i;
         
         CapHdrKey(curKvp->keyBuf, curKvp->keyLen);
+    }
+}
+
+static void EcoCli_LowReqHdrKey(EcoHttpCli *cli) {
+    EcoHttpReq *req = cli->req;
+
+    if (req == NULL || req->hdrTab == NULL) {
+        return;
+    }
+
+    for (size_t i = 0; i < req->hdrTab->kvpNum; i++) {
+        EcoKvp *curKvp = req->hdrTab->kvpAry + i;
+
+        LowHdrKey(curKvp->keyBuf, curKvp->keyLen);
     }
 }
 
@@ -1627,27 +1656,7 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
                 /* If the current byte is CR character, then
                    it may reach the end of the header line. */
                 if (byte == '\r') {
-
-                    /* Capitalize the first letter of the response header key. */
-                    EcoCli_CapRspHdrKey(cli);
-
-                    /* Call response header getting hook function. */
-                    if (cli->rspHdrHook != NULL) {
-                        for (size_t i = 0; i < cli->rsp->hdrTab->kvpNum; i++) {
-                            EcoKvp *curKvp = cli->rsp->hdrTab->kvpAry + i;
-
-                            res = cli->rspHdrHook(cli->rsp->hdrTab->kvpNum, i,
-                                                  curKvp->keyBuf, curKvp->keyLen,
-                                                  curKvp->valBuf, curKvp->valLen,
-                                                  cli->rspHdrHookArg);
-                            if (res != EcoRes_Ok) {
-                                return res;
-                            }
-                        }
-                    }
-
                     cache.rspMsgFsmStat = FsmStat_EmpLine;
-
                     break;
                 }
 
@@ -1794,45 +1803,9 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
     }
 }
 
-EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
+static EcoRes EcoHttpCli_SendReqAndParseRsp_OpenAndClose(EcoHttpCli *cli) {
     EcoChanAddr chanAddr;
     EcoRes res;
-
-    if (cli->chanOpenHook == NULL ||
-        cli->chanCloseHook == NULL ||
-        cli->chanReadHook == NULL ||
-        cli->chanWriteHook == NULL) {
-        return EcoRes_NoChanHook;
-    }
-
-    /* HTTP request must exist. */
-    if (cli->req == NULL) {
-        return EcoRes_NoReq;
-    }
-
-    /* Automatically generate necessary headers. */
-    res = EcoCli_AutoGenHdrs(cli);
-    if (res != EcoRes_Ok) {
-        return res;
-    }
-
-    /* Capitalize the first letter of the request header key. */
-    EcoCli_CapReqHdrKey(cli);
-
-    /* Call the request header getting hook. */
-    if (cli->reqHdrHook != NULL) {
-        for (size_t i = 0; i < cli->req->hdrTab->kvpNum; i++) {
-            EcoKvp *curKvp = cli->req->hdrTab->kvpAry + i;
-
-            res = cli->reqHdrHook(cli->req->hdrTab->kvpNum, i,
-                                  curKvp->keyBuf, curKvp->keyLen,
-                                  curKvp->valBuf, curKvp->valLen,
-                                  cli->rspHdrHookArg);
-            if (res != EcoRes_Ok) {
-                return res;
-            }
-        }
-    }
 
     /* Set channel address. */
     memcpy(chanAddr.addr, cli->req->chanAddr.addr, 4);
@@ -1854,6 +1827,7 @@ EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
         goto CloseChan;
     }
 
+    /* Receive and parse HTTP response. */
     res = EcoCli_ParseRspMsg(cli);
     if (res != EcoRes_Ok) {
         goto CloseChan;
@@ -1871,4 +1845,129 @@ CloseChan:
     }
 
     return res;
+}
+
+static EcoRes EcoHttpCli_SendReqAndParseRsp_KeepAlive(EcoHttpCli *cli) {
+    EcoChanAddr chanAddr;
+    EcoKvp *kvp;
+    EcoRes res;
+
+    if (cli->chanOpened) {
+        goto SendReqMsg;
+    }
+
+    /* Set channel address. */
+    memcpy(chanAddr.addr, cli->req->chanAddr.addr, 4);
+    chanAddr.port = cli->req->chanAddr.port;
+
+    /* Open channel. */
+    res = cli->chanOpenHook(&chanAddr, cli->chanHookArg);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    if (cli->chanOpened == false) {
+        cli->chanOpened = true;
+    }
+
+SendReqMsg:
+
+    /* Send HTTP request. */
+    res = EcoCli_SendReqMsg(cli);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    /* Receive and parse HTTP response. */
+    res = EcoCli_ParseRspMsg(cli);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    /* Check if server has refused keep-alive. */
+    res = EcoHdrTab_Find(cli->rsp->hdrTab, "connection", &kvp);
+    if (res == EcoRes_Ok &&
+        strcmp(kvp->valBuf, "close") == 0) {
+        cli->chanCloseHook(cli->chanHookArg);
+
+        if (cli->chanOpened) {
+            cli->chanOpened = false;
+        }
+    }
+
+    return EcoRes_Ok;
+}
+
+EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
+    EcoRes res;
+
+    if (cli->chanOpenHook == NULL ||
+        cli->chanCloseHook == NULL ||
+        cli->chanReadHook == NULL ||
+        cli->chanWriteHook == NULL) {
+        return EcoRes_NoChanHook;
+    }
+
+    /* HTTP request must exist. */
+    if (cli->req == NULL) {
+        return EcoRes_NoReq;
+    }
+
+    /* Lowercase all request headers. */
+    EcoCli_LowReqHdrKey(cli);
+
+    /* Automatically generate necessary request headers. */
+    res = EcoCli_AutoGenHdrs(cli);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    /* Capitalize the first letter of the request header key. */
+    EcoCli_CapReqHdrKey(cli);
+
+    /* Call the request header getting hook function. */
+    if (cli->reqHdrHook != NULL) {
+        for (size_t i = 0; i < cli->req->hdrTab->kvpNum; i++) {
+            EcoKvp *curKvp = cli->req->hdrTab->kvpAry + i;
+
+            res = cli->reqHdrHook(cli->req->hdrTab->kvpNum, i,
+                                  curKvp->keyBuf, curKvp->keyLen,
+                                  curKvp->valBuf, curKvp->valLen,
+                                  cli->rspHdrHookArg);
+            if (res != EcoRes_Ok) {
+                return res;
+            }
+        }
+    }
+
+    /* Send HTTP request, then receive and parse HTTP response. */
+    if (cli->keepAlive) {
+        res = EcoHttpCli_SendReqAndParseRsp_KeepAlive(cli);
+    } else {
+        res = EcoHttpCli_SendReqAndParseRsp_OpenAndClose(cli);
+    }
+
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    /* Capitalize the first letter of the response header key. */
+    EcoCli_CapRspHdrKey(cli);
+
+    /* Call response header getting hook function. */
+    if (cli->rspHdrHook != NULL) {
+        for (size_t i = 0; i < cli->rsp->hdrTab->kvpNum; i++) {
+            EcoKvp *curKvp = cli->rsp->hdrTab->kvpAry + i;
+
+            res = cli->rspHdrHook(cli->rsp->hdrTab->kvpNum, i,
+                                  curKvp->keyBuf, curKvp->keyLen,
+                                  curKvp->valBuf, curKvp->valLen,
+                                  cli->rspHdrHookArg);
+            if (res != EcoRes_Ok) {
+                return res;
+            }
+        }
+    }
+
+    return EcoRes_Ok;
 }
