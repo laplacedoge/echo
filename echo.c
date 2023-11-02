@@ -327,8 +327,10 @@ EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp **kvp) {
 
 void EcoHttpReq_Init(EcoHttpReq *req) {
     req->meth = ECO_DEF_HTTP_METH;
-    req->urlBuf = NULL;
-    req->urlLen = 0;
+    req->pathBuf = NULL;
+    req->pathLen = 0;
+    req->queryBuf = NULL;
+    req->queryLen = 0;
     memcpy(&req->chanAddr, ECO_DEF_CHAN_ADDR, sizeof(req->chanAddr));
     req->ver = ECO_DEF_HTTP_VER;
     req->hdrTab = NULL;
@@ -350,26 +352,19 @@ EcoHttpReq *EcoHttpReq_New(void) {
 }
 
 void EcoHttpReq_Deinit(EcoHttpReq *req) {
-    req->meth = ECO_DEF_HTTP_METH;
-
-    if (req->urlBuf != NULL) {
-        free(req->urlBuf);
-        req->urlBuf = NULL;
+    if (req->pathBuf != NULL) {
+        free(req->pathBuf);
     }
 
-    req->urlLen = 0;
-
-    memcpy(&req->chanAddr, ECO_DEF_CHAN_ADDR, sizeof(req->chanAddr));
-
-    req->ver = ECO_DEF_HTTP_VER;
+    if (req->queryBuf != NULL) {
+        free(req->queryBuf);
+    }
 
     if (req->hdrTab != NULL) {
         EcoHdrTab_Del(req->hdrTab);
-        req->hdrTab = NULL;
     }
 
-    req->bodyBuf = NULL;
-    req->bodyLen = 0;
+    EcoHttpReq_Init(req);
 }
 
 void EcoHttpReq_Del(EcoHttpReq *req) {
@@ -378,211 +373,653 @@ void EcoHttpReq_Del(EcoHttpReq *req) {
     free(req);
 }
 
-#define ECO_URL_MAX_LEN     (256 - 1)
-#define ECO_URL_BUF_LEN     (ECO_URL_MAX_LEN + 1)
+#define ECO_URL_SCHEME_MAX_LEN  (8 - 1)
+#define ECO_URL_SCHEME_BUF_LEN  (ECO_URL_SCHEME_MAX_LEN + 1)
 
-typedef struct _EcoUrlDsc {
-    uint8_t addr[4];
-    uint16_t port;
-    char urlBuf[ECO_URL_BUF_LEN];
-    size_t urlLen;
-} EcoUrlDsc;
+#define ECO_URL_PATH_MAX_LEN    (1024 - 1)
+#define ECO_URL_PATH_BUF_LEN    (ECO_URL_PATH_MAX_LEN + 1)
 
-void EcoUrlDsc_Init(EcoUrlDsc *dsc) {
-    dsc->addr[0] = 127;
-    dsc->addr[1] = 0;
-    dsc->addr[2] = 0;
-    dsc->addr[3] = 1;
+#define ECO_URL_QUERY_MAX_LEN   (1024 - 1)
+#define ECO_URL_QUERY_BUF_LEN   (ECO_URL_PATH_MAX_LEN + 1)
 
-    dsc->port = 80;
+/* URL parsing cache. */
+typedef struct _EcoUrlParCac {
 
-    memset(dsc->urlBuf, 0, sizeof(dsc->urlBuf));
-    dsc->urlLen = 0;
+    /* Scheme. */
+    char schemeBuf[ECO_URL_SCHEME_BUF_LEN];
+    size_t schemeLen;
+
+    /* IPv4 address. */
+    uint32_t ipv4Buf[4];
+    size_t ipv4Len;
+
+    /* Port (optional). */
+    bool portSet;
+    uint32_t port;
+
+    /* Path (optional). */
+    bool pathSet;
+    char pathBuf[ECO_URL_PATH_BUF_LEN];
+    size_t pathLen;
+
+    /* Query (optional). */
+    bool querySet;
+    char queryBuf[ECO_URL_QUERY_BUF_LEN];
+    size_t queryLen;
+} EcoUrlParCac;
+
+void EcoUrlParCac_Init(EcoUrlParCac *cache) {
+    memset(cache->schemeBuf, 0, sizeof(cache->schemeBuf));
+    cache->schemeLen = 0;
+
+    memset(cache->ipv4Buf, 0, sizeof(cache->ipv4Buf));
+    cache->ipv4Len = 0;
+
+    cache->portSet = false;
+    cache->port = 0;
+
+    cache->pathSet = false;
+    memset(cache->pathBuf, 0, sizeof(cache->pathBuf));
+    cache->pathLen = 0;
+
+    cache->querySet = false;
+    memset(cache->queryBuf, 0, sizeof(cache->queryBuf));
+    cache->queryLen = 0;
 }
 
-EcoRes EcoUrlDsc_Parse(EcoUrlDsc *dsc, const char *url) {
-    enum _FsmStat {
-        FsmStat_Start,
-        FsmStat_AddrDigit,
-        FsmStat_AddrDot,
-        FsmStat_AddrPortColon,
-        FsmStat_PortDigit,
-        FsmStat_UrlChar,
-    } fsmStat = FsmStat_Start;
+EcoUrlParCac *EcoUrlParCac_New(void) {
+    EcoUrlParCac *newCache;
 
-    const char *urlBuf = url;
+    newCache = (EcoUrlParCac *)malloc(sizeof(EcoUrlParCac));
+    if (newCache == NULL) {
+        return NULL;
+    }
+
+    EcoUrlParCac_Init(newCache);
+
+    return newCache;
+}
+
+void EcoUrlParCac_Deinit(EcoUrlParCac *cache) {
+    EcoUrlParCac_Init(cache);
+}
+
+void EcoUrlParCac_Del(EcoUrlParCac *cache) {
+    free(cache);
+}
+
+EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
+    typedef enum _FsmStat {
+        FsmStat_Scheme1stCh,
+        FsmStat_SchemeOthCh,
+        FsmStat_ColonAfterProto,
+        FsmStat_Slash1AfterProto,
+        FsmStat_Slash2AfterProto,
+        FsmStat_Ipv41stDigit,
+        FsmStat_Ipv4Dot,
+        FsmStat_Ipv4OthDigit,
+        FsmStat_ColonAfterHost,
+        FsmStat_Host1stDigit,
+        FsmStat_HostOthDigit,
+        FsmStat_PathSlash,
+        FsmStat_PathSegCh,
+        FsmStat_QuesAfterPath,
+        FsmStat_Query1stCh,
+        FsmStat_QueryOthCh,
+    } FsmStat;
+
+    FsmStat fsmStat = FsmStat_Scheme1stCh;
     size_t urlLen = strlen(url);
-    // uint8_t addrBuf[4];
-    size_t addrIdx = 0;
-    // uint16_t port;
-
-    EcoUrlDsc_Init(dsc);
 
     for (size_t i = 0; i < urlLen; i++) {
-        char ch = urlBuf[i];
+        char ch = url[i];
 
         switch (fsmStat) {
-        case FsmStat_Start:
-            if (ch >= '0' &&
-                ch <= '9') {
-                dsc->addr[0] = ch - '0';
-                addrIdx = 0;
+        case FsmStat_Scheme1stCh:
+            if ((ch >= 'a' && ch <= 'z') ||
+                (ch >= 'A' && ch <= 'Z')) {
+                cache->schemeBuf[0] = ch;
+                cache->schemeLen = 1;
 
-                fsmStat = FsmStat_AddrDigit;
-
+                fsmStat = FsmStat_SchemeOthCh;
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadChar;
 
-        case FsmStat_AddrDigit:
+        case FsmStat_SchemeOthCh:
+            if ((ch >= 'a' && ch <= 'z') ||
+                (ch >= 'A' && ch <= 'Z') ||
+                (ch >= '0' && ch <= '9') ||
+                ch == '+' ||
+                ch == '-' ||
+                ch == '.') {
+                if (cache->schemeLen == ECO_URL_SCHEME_MAX_LEN) {
+                    return EcoRes_TooBig;
+                }
+
+                cache->schemeBuf[cache->schemeLen] = ch;
+                cache->schemeLen++;
+
+                fsmStat = FsmStat_SchemeOthCh;
+                break;
+            }
+
+            if (ch == ':') {
+                cache->schemeBuf[cache->schemeLen] = '\0';
+
+                fsmStat = FsmStat_ColonAfterProto;
+                break;
+            }
+
+            return EcoRes_BadChar;
+
+        case FsmStat_ColonAfterProto:
+            if (ch == '/') {
+                fsmStat = FsmStat_Slash1AfterProto;
+                break;
+            }
+
+            return EcoRes_BadChar;
+
+        case FsmStat_Slash1AfterProto:
+            if (ch == '/') {
+                fsmStat = FsmStat_Slash2AfterProto;
+                break;
+            }
+
+            return EcoRes_BadChar;
+
+        case FsmStat_Slash2AfterProto:
+        case FsmStat_Ipv41stDigit:
+        case FsmStat_Ipv4Dot:
             if (ch >= '0' &&
                 ch <= '9') {
-                dsc->addr[addrIdx] *= 10;
-                dsc->addr[addrIdx] += ch - '0';
+                cache->ipv4Buf[cache->ipv4Len] = ch - '0';
+
+                fsmStat = FsmStat_Ipv4OthDigit;
+                break;
+            }
+
+            return EcoRes_BadChar;
+
+        case FsmStat_Ipv4OthDigit:
+            if (ch >= '0' &&
+                ch <= '9') {
+                cache->ipv4Buf[cache->ipv4Len] *= 10;
+                cache->ipv4Buf[cache->ipv4Len] += ch - '0';
+
+                if (cache->ipv4Buf[cache->ipv4Len] > 255) {
+                    return EcoRes_BadHost;
+                }
 
                 break;
             }
 
             if (ch == '.') {
-                addrIdx++;
+                if (cache->ipv4Len >= 3) {
+                    return EcoRes_BadHost;
+                }
 
-                fsmStat = FsmStat_AddrDot;
+                cache->ipv4Len++;
 
+                fsmStat = FsmStat_Ipv4Dot;
                 break;
             }
 
             if (ch == ':') {
-                fsmStat = FsmStat_AddrPortColon;
+                if (cache->ipv4Len != 3) {
+                    return EcoRes_BadHost;
+                }
 
+                cache->ipv4Len = 4;
+
+                cache->portSet = true;
+
+                fsmStat = FsmStat_ColonAfterHost;
                 break;
             }
 
-            return EcoRes_Err;
+            if (ch == '/') {
+                if (cache->ipv4Len != 3) {
+                    return EcoRes_BadHost;
+                }
 
-        case FsmStat_AddrDot:
-            if (ch >= '0' &&
-                ch <= '9') {
-                dsc->addr[addrIdx] = ch - '0';
+                cache->ipv4Len = 4;
 
-                fsmStat = FsmStat_AddrDigit;
+                cache->pathSet = true;
+                cache->pathBuf[0] = ch;
+                cache->pathLen = 1;
 
+                fsmStat = FsmStat_PathSegCh;
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadChar;
 
-        case FsmStat_AddrPortColon:
+        case FsmStat_ColonAfterHost:
+        case FsmStat_Host1stDigit:
             if (ch >= '0' &&
                 ch <= '9') {
-                dsc->port = ch - '0';
+                cache->port = ch - '0';
 
-                fsmStat = FsmStat_PortDigit;
-
+                fsmStat = FsmStat_HostOthDigit;
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadChar;
 
-        case FsmStat_PortDigit:
+        case FsmStat_HostOthDigit:
             if (ch >= '0' &&
                 ch <= '9') {
-                dsc->port *= 10;
-                dsc->port += ch - '0';
+                cache->port *= 10;
+                cache->port += ch - '0';
+
+                if (cache->port > 65535) {
+                    return EcoRes_BadPort;
+                }
+
+                fsmStat = FsmStat_HostOthDigit;
+                break;
+            }
+
+            if (ch == '/') {
+                cache->pathSet = true;
+                cache->pathBuf[0] = ch;
+                cache->pathLen = 1;
+
+                fsmStat = FsmStat_PathSegCh;
+                break;
+            }
+
+            return EcoRes_BadChar;
+
+        case FsmStat_PathSlash:
+            if ((ch >= 'a' && ch <= 'z') ||
+                (ch >= 'A' && ch <= 'Z') ||
+                (ch >= '0' && ch <= '9') ||
+                ch == '-' ||
+                ch == '_' ||
+                ch == '.' ||
+                ch == '!' ||
+                ch == '~' ||
+                ch == '*' ||
+                ch == '\'' ||
+                ch == '(' ||
+                ch == ')' ||
+                ch == ':' ||
+                ch == '@' ||
+                ch == '&' ||
+                ch == '=' ||
+                ch == '+' ||
+                ch == '$' ||
+                ch == ',') {
+                cache->pathBuf[cache->pathLen] = ch;
+                cache->pathLen++;
+
+                if (cache->pathLen == ECO_URL_PATH_MAX_LEN) {
+                    return EcoRes_TooBig;
+                }
+
+                fsmStat = FsmStat_PathSegCh;
+                break;
+            }
+
+            return EcoRes_BadChar;
+
+        case FsmStat_PathSegCh:
+            if ((ch >= 'a' && ch <= 'z') ||
+                (ch >= 'A' && ch <= 'Z') ||
+                (ch >= '0' && ch <= '9') ||
+                ch == '-' ||
+                ch == '_' ||
+                ch == '.' ||
+                ch == '!' ||
+                ch == '~' ||
+                ch == '*' ||
+                ch == '\'' ||
+                ch == '(' ||
+                ch == ')' ||
+                ch == ':' ||
+                ch == '@' ||
+                ch == '&' ||
+                ch == '=' ||
+                ch == '+' ||
+                ch == '$' ||
+                ch == ',') {
+                cache->pathBuf[cache->pathLen] = ch;
+                cache->pathLen++;
+
+                if (cache->pathLen == ECO_URL_PATH_MAX_LEN) {
+                    return EcoRes_TooBig;
+                }
 
                 break;
             }
 
             if (ch == '/') {
-                dsc->urlBuf[0] = ch;
-                dsc->urlLen = 1;
+                cache->pathBuf[cache->pathLen] = ch;
+                cache->pathLen++;
 
-                fsmStat = FsmStat_UrlChar;
-
-                break;
-            }
-
-            return EcoRes_Err;
-
-        case FsmStat_UrlChar:
-            if ((ch >= '0' && ch <= '9') ||
-                (ch >= 'a' && ch <= 'z') ||
-                (ch >= 'A' && ch <= 'Z') ||
-                ch == '-' ||
-                ch == '_' ||
-                ch == '.' ||
-                ch == '~' ||
-
-                ch == '/' ||
-                ch == '?' ||
-                ch == '#' ||
-                ch == '&' ||
-                ch == '=') {
-                if (dsc->urlLen == ECO_URL_MAX_LEN) {
+                if (cache->pathLen == ECO_URL_PATH_MAX_LEN) {
                     return EcoRes_TooBig;
                 }
 
-                dsc->urlBuf[dsc->urlLen] = ch;
-                dsc->urlLen++;
+                fsmStat = FsmStat_PathSlash;
+                break;
+            }
+
+            if (ch == '?') {
+                cache->pathBuf[cache->pathLen] = '\0';
+
+                fsmStat = FsmStat_QuesAfterPath;
+                break;
+            }
+
+            return EcoRes_BadChar;
+
+        case FsmStat_QuesAfterPath:
+        case FsmStat_Query1stCh:
+            if ((ch >= 'a' && ch <= 'z') ||
+                (ch >= 'A' && ch <= 'Z') ||
+                (ch >= '0' && ch <= '9') ||
+                ch == ';' ||
+                ch == '/' ||
+                ch == '?' ||
+                ch == ':' ||
+                ch == '@' ||
+                ch == '&' ||
+                ch == '=' ||
+                ch == '+' ||
+                ch == '$' ||
+                ch == ',' ||
+                ch == '-' ||
+                ch == '_' ||
+                ch == '.' ||
+                ch == '!' ||
+                ch == '~' ||
+                ch == '*' ||
+                ch == '\'' ||
+                ch == '(' ||
+                ch == ')' ) {
+                cache->querySet = true;
+                cache->queryBuf[0] = ch;
+                cache->queryLen = 1;
+
+                fsmStat = FsmStat_QueryOthCh;
+                break;
+            }
+
+            return EcoRes_BadChar;
+
+        case FsmStat_QueryOthCh:
+            if ((ch >= 'a' && ch <= 'z') ||
+                (ch >= 'A' && ch <= 'Z') ||
+                (ch >= '0' && ch <= '9') ||
+                ch == ';' ||
+                ch == '/' ||
+                ch == '?' ||
+                ch == ':' ||
+                ch == '@' ||
+                ch == '&' ||
+                ch == '=' ||
+                ch == '+' ||
+                ch == '$' ||
+                ch == ',' ||
+                ch == '-' ||
+                ch == '_' ||
+                ch == '.' ||
+                ch == '!' ||
+                ch == '~' ||
+                ch == '*' ||
+                ch == '\'' ||
+                ch == '(' ||
+                ch == ')' ) {
+                cache->queryBuf[cache->queryLen] = ch;
+                cache->queryLen++;
 
                 break;
             }
 
-            return EcoRes_Err;
+            return EcoRes_BadChar;
         }
     }
 
-    if (fsmStat == FsmStat_AddrDigit) {
-        if (addrIdx != 3) {
-            return EcoRes_Err;
-        }
+    switch (fsmStat) {
+    case FsmStat_Scheme1stCh:
+    case FsmStat_SchemeOthCh:
+    case FsmStat_ColonAfterProto:
+    case FsmStat_Slash1AfterProto:
+    case FsmStat_Slash2AfterProto:
+    case FsmStat_Ipv41stDigit:
+    case FsmStat_Ipv4Dot:
+        return EcoRes_BadFmt;
 
-        dsc->port = 80;
-        dsc->urlBuf[0] = '/';
-        dsc->urlBuf[1] = '\0';
-        dsc->urlLen = 1;
-    } else if (fsmStat == FsmStat_PortDigit) {
-        dsc->urlBuf[0] = '/';
-        dsc->urlBuf[1] = '\0';
-        dsc->urlLen = 1;
-    } else if (fsmStat == FsmStat_UrlChar) {
-        dsc->urlBuf[dsc->urlLen] = '\0';
-    } else {
-        return EcoRes_Err;
+    case FsmStat_Ipv4OthDigit:
+        if (cache->ipv4Len != 3) {
+            return EcoRes_BadFmt;
+        }
+        break;
+
+    case FsmStat_ColonAfterHost:
+    case FsmStat_Host1stDigit:
+        return EcoRes_BadFmt;
+
+    case FsmStat_HostOthDigit:
+        break;
+
+    case FsmStat_PathSlash:
+    case FsmStat_PathSegCh:
+        cache->pathBuf[cache->pathLen] = '\0';
+        break;
+
+    case FsmStat_QuesAfterPath:
+    case FsmStat_Query1stCh:
+        return EcoRes_BadFmt;
+
+    case FsmStat_QueryOthCh:
+        cache->queryBuf[cache->queryLen] = '\0';
+        break;
     }
 
     return EcoRes_Ok;
 }
 
-EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg) {
-    switch (opt) {
-    case EcoHttpReqOpt_Url: {
-        EcoUrlDsc urlDsc;
-        EcoRes res;
+static EcoRes EcoHttpReq_SetOpt_Url(EcoHttpReq *req, const char *url) {
+    EcoChanAddr *addr = &req->chanAddr;
+    EcoUrlParCac *cache;
+    char *pathBuf;
+    char *queryBuf;
+    bool isHttps;
+    EcoRes res;
 
-        res = EcoUrlDsc_Parse(&urlDsc, (char *)arg);
+    /* Create URL parsing cache. */
+    cache = EcoUrlParCac_New();
+    if (cache == NULL) {
+        return EcoRes_NoMem;
+    }
+
+    /* Parse URL. */
+    res = EcoUrlParCac_ParseUrl(cache, url);
+    if (res != EcoRes_Ok) {
+        goto Finally;
+    }
+
+    /* Check scheme. */
+    if (strcmp(cache->schemeBuf, "http") == 0) {
+        isHttps = false;
+    } else if (strcmp(cache->schemeBuf, "https") == 0) {
+        isHttps = true;
+    } else {
+        res = EcoRes_BadScheme;
+        goto Finally;
+    }
+
+    /* Copy path and query string. */
+    if (cache->pathSet) {
+        pathBuf = (char *)malloc(cache->pathLen + 1);
+        if (pathBuf == NULL) {
+            res = EcoRes_NoMem;
+            goto Finally;
+        }
+
+        memcpy(pathBuf, cache->pathBuf, cache->pathLen + 1);
+    }
+    if (cache->querySet) {
+        queryBuf = (char *)malloc(cache->queryLen + 1);
+        if (pathBuf == NULL) {
+            free(pathBuf);
+
+            res = EcoRes_NoMem;
+            goto Finally;
+        }
+
+        memcpy(queryBuf, cache->queryBuf, cache->queryLen + 1);
+    }
+
+    /* Copy IP address and port. */
+    addr->addr[0] = (uint8_t)cache->ipv4Buf[0];
+    addr->addr[1] = (uint8_t)cache->ipv4Buf[1];
+    addr->addr[2] = (uint8_t)cache->ipv4Buf[2];
+    addr->addr[3] = (uint8_t)cache->ipv4Buf[3];
+
+    if (cache->portSet) {
+        addr->port = (uint16_t)cache->port;
+    } else {
+        if (isHttps) {
+            addr->port = 443;
+        } else {
+            addr->port = 80;
+        }
+    }
+
+    /* Replace path and query string */
+    if (cache->pathSet) {
+        if (req->pathBuf != NULL) {
+            free(req->pathBuf);
+        }
+
+        req->pathBuf = pathBuf;
+        req->pathLen = cache->pathLen;
+    }
+    if (cache->querySet) {
+        if (req->queryBuf != NULL) {
+            free(req->queryBuf);
+        }
+
+        req->queryBuf = queryBuf;
+        req->queryLen = cache->queryLen;
+    }
+
+    res = EcoRes_Ok;
+
+Finally:
+    EcoUrlParCac_Del(cache);
+
+    return res;
+}
+
+/**
+ * @brief Parse host IPv4 address string.
+ * 
+ * @param req HTTP request.
+ * @param host Host IPv4 address string.
+ */
+EcoRes EcoHttpReq_SetOpt_Host(EcoHttpReq *req, const char *host) {
+    typedef enum _FsmStat {
+        FsmStat_1stChInNum,
+        FsmStat_OthChOrDot,
+    } FsmStat;
+
+    EcoChanAddr *chanAddr = &req->chanAddr;
+    FsmStat fsmStat = FsmStat_1stChInNum;
+    size_t hostLen = strlen(host);
+    int numBuf[4] = {0};
+    int numIdx = 0;
+
+    for (int i = 0; i < hostLen; i++) {
+        char ch = host[i];
+
+        switch (fsmStat) {
+        case FsmStat_1stChInNum:
+            if (ch >= '0' && ch <= '9') {
+                numBuf[numIdx] = ch - '0';
+
+                fsmStat = FsmStat_OthChOrDot;
+                break;
+            }
+
+            return EcoRes_BadChar;
+
+        case FsmStat_OthChOrDot:
+            if (numBuf[numIdx] == 0) {
+                if (ch == '.') {
+                    numIdx++;
+                    if (numIdx == 4) {
+                        return EcoRes_BadFmt;
+                    }
+
+                    fsmStat = FsmStat_1stChInNum;
+                    break;
+                }
+            } else {
+                if (ch >= '0' && ch <= '9') {
+                    numBuf[numIdx] *= 10;
+                    numBuf[numIdx] += ch - '0';
+                    if (numBuf[numIdx] > 255) {
+                        return EcoRes_BadFmt;
+                    }
+
+                    break;
+                }
+
+                if (ch == '.') {
+                    numIdx++;
+                    if (numIdx == 4) {
+                        return EcoRes_BadFmt;
+                    }
+
+                    fsmStat = FsmStat_1stChInNum;
+                    break;
+                }
+            }
+
+            return EcoRes_BadChar;
+        }
+    }
+
+    if (fsmStat != FsmStat_OthChOrDot ||
+        numIdx != 3) {
+        return EcoRes_BadFmt;
+    }
+
+    chanAddr->addr[0] = (uint8_t)numBuf[0];
+    chanAddr->addr[1] = (uint8_t)numBuf[1];
+    chanAddr->addr[2] = (uint8_t)numBuf[2];
+    chanAddr->addr[3] = (uint8_t)numBuf[3];
+
+    return EcoRes_Ok;
+}
+
+EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg) {
+    EcoRes res;
+
+    switch (opt) {
+    case EcoHttpReqOpt_Url:
+        res = EcoHttpReq_SetOpt_Url(req, (char *)arg);
         if (res != EcoRes_Ok) {
             return res;
         }
 
-        memcpy(req->chanAddr.addr, urlDsc.addr, 4);
-        req->chanAddr.port = urlDsc.port;
+        break;
 
-        /* Set new URL. */
-        if (req->urlBuf != NULL) {
-            free(req->urlBuf);
+    case EcoHttpReqOpt_Host:
+        res = EcoHttpReq_SetOpt_Host(req, (char *)arg);
+        if (res != EcoRes_Ok) {
+            return res;
         }
-
-        req->urlBuf = (char *)malloc(urlDsc.urlLen + 1);
-        if (req->urlBuf == NULL) {
-            return EcoRes_NoMem;
-        }
-
-        memcpy(req->urlBuf, urlDsc.urlBuf, urlDsc.urlLen + 1);
-        req->urlLen = urlDsc.urlLen;
 
         break;
-    }
 
     case EcoHttpReqOpt_Addr:
         memcpy(req->chanAddr.addr, (uint8_t *)arg, 4);
@@ -593,24 +1030,73 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg) {
         break;
 
     case EcoHttpReqOpt_Path: {
-        char *pathBuf = (char *)arg;
-        size_t pathLen = strlen(pathBuf);
+        size_t pathLen;
+        char *pathBuf;
 
-        if (req->urlBuf != NULL) {
-            free(req->urlBuf);
+        // TODO: I probably should parse not simply copy it :(
 
-            req->urlBuf = NULL;
-            req->urlLen = 0;
+        /* If `arg` is NULL or it's empty string, set path string to empty. */
+        if (arg == NULL || (pathLen = strlen((char *)arg)) == 0) {
+            if (req->pathBuf != NULL) {
+                free(req->pathBuf);
+                req->pathBuf = NULL;
+            }
+
+            req->pathLen = 0;
+
+            break;
         }
 
-        req->urlBuf = (char *)malloc(pathLen + 1);
-        if (req->urlBuf == NULL) {
+        /* Create a new string for storing path string. */
+        pathBuf = (char *)malloc(pathLen + 1);
+        if (pathBuf == NULL) {
             return EcoRes_NoMem;
         }
 
-        memcpy(req->urlBuf, pathBuf, pathLen + 1);
+        memcpy(pathBuf, arg, pathLen + 1);
 
-        req->urlLen = pathLen;
+        if (req->pathBuf != NULL) {
+            free(req->pathBuf);
+        }
+
+        req->pathBuf = pathBuf;
+        req->pathLen = pathLen;
+
+        break;
+    }
+
+    case EcoHttpReqOpt_Query: {
+        size_t queryLen;
+        char *queryBuf;
+
+        // TODO: I probably should parse not simply copy it :(
+
+        /* If `arg` is NULL or it's empty string, set query string to empty. */
+        if (arg == NULL || (queryLen = strlen((char *)arg)) == 0) {
+            if (req->queryBuf != NULL) {
+                free(req->queryBuf);
+                req->queryBuf = NULL;
+            }
+
+            req->queryLen = 0;
+
+            break;
+        }
+
+        /* Create a new string for storing query string. */
+        queryBuf = (char *)malloc(queryLen + 1);
+        if (queryBuf == NULL) {
+            return EcoRes_NoMem;
+        }
+
+        memcpy(queryBuf, arg, queryLen + 1);
+
+        if (req->queryBuf != NULL) {
+            free(req->queryBuf);
+        }
+
+        req->queryBuf = queryBuf;
+        req->queryLen = queryLen;
 
         break;
     }
@@ -1033,8 +1519,10 @@ EcoRes EcoCli_FlushCache(EcoHttpCli *cli, SendCache *cache) {
 }
 
 EcoRes EcoCli_SendReqMsg(EcoHttpCli *cli) {
-    char *startLineBuf[512];
+    EcoHttpReq *req = cli->req;
     SendCache cache;
+    char tmpBuf[32];
+    int sndLen;
     int wrLen;
     int ret;
     EcoRes res;
@@ -1042,16 +1530,38 @@ EcoRes EcoCli_SendReqMsg(EcoHttpCli *cli) {
     SendCache_Init(&cache);
 
     /* Send start line. */
-    ret = snprintf((char *)startLineBuf, sizeof(startLineBuf),
-        "%s %s HTTP/%s\r\n",
-        EcoHttpMeth_ToStr(cli->req->meth),
-        cli->req->urlBuf,
-        EcoHttpVer_ToStr(cli->req->ver));
-    if (ret >= sizeof(startLineBuf)) {
-        return EcoRes_TooBig;
+    sndLen = snprintf(tmpBuf, sizeof(tmpBuf), "%s ", EcoHttpMeth_ToStr(req->meth));
+    res = EcoCli_SendData(cli, &cache, tmpBuf, sndLen);
+    if (res != EcoRes_Ok) {
+        return res;
     }
 
-    res = EcoCli_SendData(cli, &cache, startLineBuf, ret);
+    if (req->pathBuf != NULL) {
+        res = EcoCli_SendData(cli, &cache, req->pathBuf, req->pathLen);
+        if (res != EcoRes_Ok) {
+            return res;
+        }
+    } else {
+        res = EcoCli_SendData(cli, &cache, "/", 1);
+        if (res != EcoRes_Ok) {
+            return res;
+        }
+    }
+
+    if (req->queryBuf != NULL) {
+        res = EcoCli_SendData(cli, &cache, "?", 1);
+        if (res != EcoRes_Ok) {
+            return res;
+        }
+
+        res = EcoCli_SendData(cli, &cache, req->queryBuf, req->queryLen);
+        if (res != EcoRes_Ok) {
+            return res;
+        }
+    }
+
+    sndLen = snprintf(tmpBuf, sizeof(tmpBuf), " HTTP/%s\r\n", EcoHttpVer_ToStr(req->ver));
+    res = EcoCli_SendData(cli, &cache, tmpBuf, sndLen);
     if (res != EcoRes_Ok) {
         return res;
     }

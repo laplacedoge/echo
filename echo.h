@@ -30,15 +30,10 @@ typedef enum _EcoRes {
 
     EcoRes_Err              = -1,
     EcoRes_NoMem            = -2,
-
     EcoRes_NotFound         = -3,
-
     EcoRes_BadOpt           = -4,
-
     EcoRes_ReachEnd         = -5,
-
     EcoRes_NoChanHook       = -6,
-
     EcoRes_Again            = -7,
 
     EcoRes_BadStatLine      = -8,
@@ -57,12 +52,18 @@ typedef enum _EcoRes {
     EcoRes_BadChanClose     = -20,
 
     EcoRes_TooSmall         = -21,
-
     EcoRes_TooBig           = -22,
 
     EcoRes_NoReq            = -23,
-
     EcoRes_NoRsp            = -24,
+
+    EcoRes_BadScheme        = -25,
+    EcoRes_BadHost          = -26,
+    EcoRes_BadPort          = -27,
+    EcoRes_BadPath          = -28,
+    EcoRes_BadQuery         = -29,
+    EcoRes_BadFmt           = -30,
+    EcoRes_BadChar          = -31,
 } EcoRes;
 
 typedef enum _EcoHttpVer {
@@ -86,9 +87,11 @@ typedef enum _EcoHttpMeth {
 
 typedef enum _EcoHttpReqOpt {
     EcoHttpReqOpt_Url,
-    EcoHttpReqOpt_Addr,
+    EcoHttpReqOpt_Host,
     EcoHttpReqOpt_Port,
+    EcoHttpReqOpt_Addr,
     EcoHttpReqOpt_Path,
+    EcoHttpReqOpt_Query,
     EcoHttpReqOpt_Method,
     EcoHttpReqOpt_Verion,
     EcoHttpReqOpt_Headers,
@@ -207,10 +210,17 @@ typedef struct _EcoChanAddr {
 
 typedef struct _EcoHttpReq {
     EcoHttpMeth meth;
-    char *urlBuf;
-    size_t urlLen;
+
     EcoChanAddr chanAddr;
+
+    char *pathBuf;
+    size_t pathLen;
+
+    char *queryBuf;
+    size_t queryLen;
+
     EcoHttpVer ver;
+
     EcoHdrTab *hdrTab;
 
     /* Body field is not dynamicly allocated. */
