@@ -160,11 +160,11 @@ int main(int argc, char *argv[]) {
     assert(req != NULL);
 
 #ifdef ENABLE_EASY_URL_SETTING
-    res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Url, "192.168.8.176:1180/e69974f04b05dcf07f2a.svg");
+    res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Url, "http://192.168.8.176:1180/e69974f04b05dcf07f2a.svg");
     assert(res == EcoRes_Ok);
     assert(memcmp(req->chanAddr.addr, (uint8_t [4]){192, 168, 8, 176}, 4) == 0);
     assert(req->chanAddr.port == 1180);
-    assert(strcmp(req->urlBuf, "/e69974f04b05dcf07f2a.svg") == 0);
+    assert(strcmp(req->pathBuf, "/e69974f04b05dcf07f2a.svg") == 0);
 #else
     res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Addr, (EcoArg)(uint8_t [4]){192, 168, 8, 176});
     assert(res == EcoRes_Ok);
@@ -176,7 +176,7 @@ int main(int argc, char *argv[]) {
 
     res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Path, "/e69974f04b05dcf07f2a.svg");
     assert(res == EcoRes_Ok);
-    assert(strcmp(req->urlBuf, "/e69974f04b05dcf07f2a.svg") == 0);
+    assert(strcmp(req->pathBuf, "/e69974f04b05dcf07f2a.svg") == 0);
 #endif
 
     res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Verion, (EcoArg)EcoHttpVer_1_1);
