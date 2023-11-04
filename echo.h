@@ -22,6 +22,9 @@
  * SOFTWARE.
  */
 
+#ifndef __ECHO_H__
+#define __ECHO_H__
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -74,16 +77,12 @@ typedef enum _EcoHttpVer {
     EcoHttpVer_1_1,
 } EcoHttpVer;
 
-#define ECO_DEF_HTTP_VER    EcoHttpVer_1_1
-
 typedef enum _EcoHttpMeth {
     EcoHttpMeth_Get,
     EcoHttpMeth_Post,
     EcoHttpMeth_Head,
     EcoHttpMeth_Put,
 } EcoHttpMeth;
-
-#define ECO_DEF_HTTP_METH   EcoHttpMeth_Get
 
 typedef enum _EcoHttpReqOpt {
     EcoHttpReqOpt_Url,
@@ -205,8 +204,6 @@ typedef struct _EcoChanAddr {
     uint8_t addr[4];
     uint16_t port;
 } EcoChanAddr;
-
-#define ECO_DEF_CHAN_ADDR   (&(EcoChanAddr){{ 127, 0, 0, 1 }, 80})
 
 typedef struct _EcoHttpReq {
     EcoHttpMeth meth;
@@ -404,3 +401,5 @@ void EcoHttpCli_Del(EcoHttpCli *cli);
 EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoHttpCliOpt opt, EcoArg arg);
 
 EcoRes EcoHttpCli_Issue(EcoHttpCli *cli);
+
+#endif

@@ -33,6 +33,7 @@
 #include <stdio.h>
 
 #include "echo.h"
+#include "conf.h"
 
 
 
@@ -326,13 +327,14 @@ EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp **kvp) {
 }
 
 void EcoHttpReq_Init(EcoHttpReq *req) {
-    req->meth = ECO_DEF_HTTP_METH;
+    req->meth = ECO_CONF_DEF_HTTP_METH;
     req->pathBuf = NULL;
     req->pathLen = 0;
     req->queryBuf = NULL;
     req->queryLen = 0;
-    memcpy(&req->chanAddr, ECO_DEF_CHAN_ADDR, sizeof(req->chanAddr));
-    req->ver = ECO_DEF_HTTP_VER;
+    memcpy(req->chanAddr.addr, ECO_CONF_DEF_IP_ADDR,
+           sizeof(req->chanAddr.addr));
+    req->ver = ECO_CONF_DEF_HTTP_VER;
     req->hdrTab = NULL;
     req->bodyBuf = NULL;
     req->bodyLen = 0;
@@ -887,9 +889,9 @@ static EcoRes EcoHttpReq_SetOpt_Url(EcoHttpReq *req, const char *url) {
         addr->port = (uint16_t)cache->port;
     } else {
         if (isHttps) {
-            addr->port = 443;
+            addr->port = ECO_CONF_DEF_HTTPS_PORT;
         } else {
-            addr->port = 80;
+            addr->port = ECO_CONF_DEF_HTTP_PORT;
         }
     }
 
