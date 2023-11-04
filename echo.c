@@ -2325,6 +2325,76 @@ static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
     }
 }
 
+/**
+ * @brief Call HTTP request header hook.
+ * @note Hook won't be called if it's not set yet.
+ * 
+ * @param cli The HTTP client where the request is located.
+ */
+static EcoRes EcoCli_CallReqHdrHook(EcoHttpCli *cli) {
+    EcoHdrTab *tab;
+    EcoRes res;
+
+    if (cli->reqHdrHook == NULL ||
+        cli->req == NULL ||
+        cli->req->hdrTab == NULL) {
+        return EcoRes_Ok;
+    }
+
+    tab = cli->req->hdrTab;
+
+    if (cli->reqHdrHook != NULL) {
+        for (size_t i = 0; i < tab->kvpNum; i++) {
+            EcoKvp *kvp = tab->kvpAry + i;
+
+            res = cli->reqHdrHook(tab->kvpNum, i,
+                                  kvp->keyBuf, kvp->keyLen,
+                                  kvp->valBuf, kvp->valLen,
+                                  cli->rspHdrHookArg);
+            if (res != EcoRes_Ok) {
+                return res;
+            }
+        }
+    }
+
+    return EcoRes_Ok;
+}
+
+/**
+ * @brief Call HTTP response header hook.
+ * @note Hook won't be called if it's not set yet.
+ * 
+ * @param cli The HTTP client where the response is located.
+ */
+static EcoRes EcoCli_CallRspHdrHook(EcoHttpCli *cli) {
+    EcoHdrTab *tab;
+    EcoRes res;
+
+    if (cli->rspHdrHook == NULL ||
+        cli->rsp == NULL ||
+        cli->rsp->hdrTab == NULL) {
+        return EcoRes_Ok;
+    }
+
+    tab = cli->rsp->hdrTab;
+
+    if (cli->rspHdrHook != NULL) {
+        for (size_t i = 0; i < tab->kvpNum; i++) {
+            EcoKvp *kvp = tab->kvpAry + i;
+
+            res = cli->rspHdrHook(tab->kvpNum, i,
+                                  kvp->keyBuf, kvp->keyLen,
+                                  kvp->valBuf, kvp->valLen,
+                                  cli->rspHdrHookArg);
+            if (res != EcoRes_Ok) {
+                return res;
+            }
+        }
+    }
+
+    return EcoRes_Ok;
+}
+
 static EcoRes EcoHttpCli_SendReqAndParseRsp_OpenAndClose(EcoHttpCli *cli) {
     EcoChanAddr chanAddr;
     EcoRes res;
@@ -2447,20 +2517,8 @@ EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
     /* Capitalize the first letter of the request header key. */
     EcoCli_CapReqHdrKey(cli);
 
-    /* Call the request header getting hook function. */
-    if (cli->reqHdrHook != NULL) {
-        for (size_t i = 0; i < cli->req->hdrTab->kvpNum; i++) {
-            EcoKvp *curKvp = cli->req->hdrTab->kvpAry + i;
-
-            res = cli->reqHdrHook(cli->req->hdrTab->kvpNum, i,
-                                  curKvp->keyBuf, curKvp->keyLen,
-                                  curKvp->valBuf, curKvp->valLen,
-                                  cli->rspHdrHookArg);
-            if (res != EcoRes_Ok) {
-                return res;
-            }
-        }
-    }
+    /* Call request header hook. */
+    EcoCli_CallReqHdrHook(cli);
 
     /* Send HTTP request, then receive and parse HTTP response. */
     if (cli->keepAlive) {
@@ -2476,20 +2534,8 @@ EcoRes EcoHttpCli_Issue(EcoHttpCli *cli) {
     /* Capitalize the first letter of the response header key. */
     EcoCli_CapRspHdrKey(cli);
 
-    /* Call response header getting hook function. */
-    if (cli->rspHdrHook != NULL) {
-        for (size_t i = 0; i < cli->rsp->hdrTab->kvpNum; i++) {
-            EcoKvp *curKvp = cli->rsp->hdrTab->kvpAry + i;
-
-            res = cli->rspHdrHook(cli->rsp->hdrTab->kvpNum, i,
-                                  curKvp->keyBuf, curKvp->keyLen,
-                                  curKvp->valBuf, curKvp->valLen,
-                                  cli->rspHdrHookArg);
-            if (res != EcoRes_Ok) {
-                return res;
-            }
-        }
-    }
+    /* Call response header hook. */
+    EcoCli_CallRspHdrHook(cli);
 
     return EcoRes_Ok;
 }
