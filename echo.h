@@ -40,6 +40,7 @@ typedef enum _EcoRes {
     EcoRes_NoMem,
     EcoRes_NotFound,
     EcoRes_BadOpt,
+    EcoRes_BadArg,
     EcoRes_Again,
 
     /* Errors used while parsing HTTP URL. */
@@ -110,14 +111,24 @@ typedef enum _EcoHttpCliOpt {
     EcoHttpCliOpt_ChanSetOptHook,
     EcoHttpCliOpt_ChanReadHook,
     EcoHttpCliOpt_ChanWriteHook,
+
     EcoHttpCliOpt_ReqHdrHookArg,
     EcoHttpCliOpt_ReqHdrHook,
+
     EcoHttpCliOpt_RspHdrHookArg,
     EcoHttpCliOpt_RspHdrHook,
+
     EcoHttpCliOpt_BodyHookArg,
     EcoHttpCliOpt_BodyWriteHook,
+
     EcoHttpCliOpt_KeepAlive,
     EcoHttpCliOpt_Request,
+
+    /* Set send chunk buffer capacity (in bytes).
+
+       This option will clear all data
+       in the send chunk buffer. */
+    EcoHttpCliOpt_SndChunkCap,
 } EcoHttpCliOpt;
 
 typedef void * EcoArg;
@@ -280,25 +291,32 @@ typedef EcoRes (*EcoRspHdrHook)(size_t hdrNum, size_t hdrIdx,
 typedef int (*EcoBodyWriteHook)(int off, const void *buf, int len, EcoArg arg);
 
 typedef struct _EcoHttpCli {
+    EcoHttpReq *req;
+    EcoHttpRsp *rsp;
+
+    uint8_t *sndChunkBuf;   // Send chunk buffer.
+    size_t sndChunkCap;     // Send chunk buffer capacity.
+    size_t sndChunkLen;     // Send chunk buffer data length.
+
     EcoArg chanHookArg;
     EcoChanOpenHook chanOpenHook;
     EcoChanCloseHook chanCloseHook;
     EcoChanSetOptHook chanSetOptHook;
     EcoChanReadHook chanReadHook;
     EcoChanWriteHook chanWriteHook;
+
     EcoArg reqHdrHookArg;
     EcoRspHdrHook reqHdrHook;
+
     EcoArg rspHdrHookArg;
     EcoRspHdrHook rspHdrHook;
+
     EcoArg bodyHookArg;
     EcoBodyWriteHook bodyWriteHook;
 
     /* Flags. */
     uint32_t chanOpened: 1;
     uint32_t keepAlive: 1;
-
-    EcoHttpReq *req;
-    EcoHttpRsp *rsp;
 } EcoHttpCli;
 
 /**

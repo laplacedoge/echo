@@ -37,6 +37,16 @@
 
 
 
+#define SND_CHUNK_LEN_MIN   512
+
+
+
+#if ECO_CONF_DEF_SND_CHUNK_LEN < SND_CHUNK_LEN_MIN
+    #error "Configuration ECO_CONF_DEF_SND_CHUNK_LEN is too small."
+#endif
+
+
+
 #define ECO_VER_MAJOR_STR   "1"
 #define ECO_VER_MINOR_STR   "0"
 #define ECO_VER_MICRO_STR   "0"
@@ -57,6 +67,7 @@ const char *EcoRes_ToStr(EcoRes res) {
     case EcoRes_NoMem: return "No enough memory";
     case EcoRes_NotFound: return "Not found";
     case EcoRes_BadOpt: return "Bad option";
+    case EcoRes_BadArg: return "Bad argument";
     case EcoRes_Again: return "Try again";
     case EcoRes_BadScheme: return "Invalid scheme";
     case EcoRes_BadHost: return "Invalid host";
@@ -1218,24 +1229,31 @@ void EcoHttpRsp_Del(EcoHttpRsp *rsp) {
 }
 
 void EcoHttpCli_Init(EcoHttpCli *cli) {
+    cli->req = NULL;
+    cli->rsp = NULL;
+
+    cli->sndChunkBuf = NULL;
+    cli->sndChunkCap = ECO_CONF_DEF_SND_CHUNK_LEN;
+    cli->sndChunkLen = 0;
+
     cli->chanHookArg = NULL;
     cli->chanOpenHook = NULL;
     cli->chanCloseHook = NULL;
     cli->chanSetOptHook = NULL;
     cli->chanReadHook = NULL;
     cli->chanWriteHook = NULL;
+
     cli->reqHdrHookArg = NULL;
     cli->reqHdrHook = NULL;
+
     cli->rspHdrHookArg = NULL;
     cli->rspHdrHook = NULL;
+
     cli->bodyHookArg = NULL;
     cli->bodyWriteHook = NULL;
 
     cli->chanOpened = false;
     cli->keepAlive = false;
-
-    cli->req = NULL;
-    cli->rsp = NULL;
 }
 
 EcoHttpCli *EcoHttpCli_New(void) {
@@ -1259,27 +1277,19 @@ void EcoHttpCli_Deinit(EcoHttpCli *cli) {
         cli->chanCloseHook(cli->chanHookArg);
     }
 
-    cli->chanHookArg = NULL;
-    cli->chanOpenHook = NULL;
-    cli->chanCloseHook = NULL;
-    cli->chanSetOptHook = NULL;
-    cli->chanReadHook = NULL;
-    cli->chanWriteHook = NULL;
-    cli->bodyHookArg = NULL;
-    cli->bodyWriteHook = NULL;
-
-    cli->chanOpened = false;
-    cli->keepAlive = false;
-
     if (cli->req != NULL) {
         EcoHttpReq_Del(cli->req);
-        cli->req = NULL;
     }
 
     if (cli->rsp != NULL) {
         EcoHttpRsp_Del(cli->rsp);
-        cli->rsp = NULL;
     }
+
+    if (cli->sndChunkBuf != NULL) {
+        free(cli->sndChunkBuf);
+    }
+
+    EcoHttpCli_Init(cli);
 }
 
 void EcoHttpCli_Del(EcoHttpCli *cli) {
@@ -1348,6 +1358,37 @@ EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoHttpCliOpt opt, EcoArg arg) {
         }
         cli->req = (EcoHttpReq *)arg;
         break;
+
+    case EcoHttpCliOpt_SndChunkCap: {
+        size_t newChunkCap = (size_t)arg;
+
+        if (newChunkCap < SND_CHUNK_LEN_MIN) {
+            return EcoRes_BadArg;
+        }
+
+        if (cli->sndChunkBuf != NULL) {
+            uint8_t *newChunkBuf;
+
+            newChunkBuf = (uint8_t *)malloc(newChunkCap);
+            if (newChunkBuf == NULL) {
+                return EcoRes_NoMem;
+            }
+
+            free(cli->sndChunkBuf);
+
+            cli->sndChunkBuf = newChunkBuf;
+        } else {
+            cli->sndChunkBuf = (uint8_t *)malloc(newChunkCap);
+            if (cli->sndChunkBuf == NULL) {
+                return EcoRes_NoMem;
+            }
+        }
+
+        cli->sndChunkCap = newChunkCap;
+        cli->sndChunkLen = 0;
+
+        break;
+    }
 
     default:
         return EcoRes_BadOpt;
@@ -1478,61 +1519,59 @@ static void EcoCli_LowReqHdrKey(EcoHttpCli *cli) {
     }
 }
 
-#define ECO_SND_CACHE_BUF_LEN   512
-
-typedef struct _SendCache {
-    uint8_t datBuf[ECO_SND_CACHE_BUF_LEN];
-    size_t datLen;
-} SendCache;
-
-void SendCache_Init(SendCache *cache) {
-    cache->datLen = 0;
-}
-
-EcoRes EcoCli_SendData(EcoHttpCli *cli, SendCache *cache, void *buf, int len) {
+/**
+ * @brief Send request message data.
+ * @note This function will accumulate data in the send buffer and send them
+ *       when the send buffer is full.
+ * 
+ * @param cli HTTP client.
+ * @param buf Data buffer.
+ * @param len Data length.
+ */
+static EcoRes SendReqData(EcoHttpCli *cli, void *buf, int len) {
     int restLen;
     int remLen;
     int curLen;
     int wrLen;
 
     /* If the send cache is full, send them immediately. */
-    if (cache->datLen == sizeof(cache->datBuf)) {
-        wrLen = cli->chanWriteHook(cache->datBuf, cache->datLen, cli->chanHookArg);
-        if (wrLen != cache->datLen) {
+    if (cli->sndChunkLen == cli->sndChunkCap) {
+        wrLen = cli->chanWriteHook(cli->sndChunkBuf, cli->sndChunkLen, cli->chanHookArg);
+        if (wrLen != cli->sndChunkLen) {
             return EcoRes_BadChanWrite;
         }
 
-        cache->datLen = 0;
+        cli->sndChunkLen = 0;
     }
 
     remLen = len;
     while (remLen != 0) {
-        restLen = sizeof(cache->datBuf) - cache->datLen;
+        restLen = cli->sndChunkCap - cli->sndChunkLen;
         if (remLen >= restLen) {
             curLen = restLen;
         } else {
             curLen = remLen;
         }
 
-        if (curLen == sizeof(cache->datBuf)) {
+        if (curLen == cli->sndChunkCap) {
             wrLen = cli->chanWriteHook((uint8_t *)buf + len - remLen, curLen, cli->chanHookArg);
-            if (wrLen != cache->datLen) {
+            if (wrLen != cli->sndChunkLen) {
                 return EcoRes_BadChanWrite;
             }
         } else {
-            memcpy(cache->datBuf + cache->datLen, (uint8_t *)buf + len - remLen, curLen);
-            cache->datLen += curLen;
+            memcpy(cli->sndChunkBuf + cli->sndChunkLen, (uint8_t *)buf + len - remLen, curLen);
+            cli->sndChunkLen += curLen;
 
             remLen -= curLen;
 
             /* If the send cache is full, send them immediately. */
-            if (cache->datLen == sizeof(cache->datBuf)) {
-                wrLen = cli->chanWriteHook(cache->datBuf, cache->datLen, cli->chanHookArg);
-                if (wrLen != cache->datLen) {
+            if (cli->sndChunkLen == cli->sndChunkCap) {
+                wrLen = cli->chanWriteHook(cli->sndChunkBuf, cli->sndChunkLen, cli->chanHookArg);
+                if (wrLen != cli->sndChunkLen) {
                     return EcoRes_BadChanWrite;
                 }
 
-                cache->datLen = 0;
+                cli->sndChunkLen = 0;
             }
         }
     }
@@ -1540,67 +1579,86 @@ EcoRes EcoCli_SendData(EcoHttpCli *cli, SendCache *cache, void *buf, int len) {
     return EcoRes_Ok;
 }
 
-EcoRes EcoCli_FlushCache(EcoHttpCli *cli, SendCache *cache) {
+/**
+ * @brief Flush data in the send buffer.
+ * @note This function will send all data in the send buffer.
+ * 
+ * @param cli HTTP client.
+ */
+static EcoRes FlushReqData(EcoHttpCli *cli) {
     int wrLen;
 
-    if (cache->datLen == 0) {
+    if (cli->sndChunkLen == 0) {
         return EcoRes_Ok;
     }
 
-    wrLen = cli->chanWriteHook(cache->datBuf, cache->datLen, cli->chanHookArg);
-    if (wrLen != cache->datLen) {
+    wrLen = cli->chanWriteHook(cli->sndChunkBuf, cli->sndChunkLen, cli->chanHookArg);
+    if (wrLen != cli->sndChunkLen) {
         return EcoRes_Err;
     }
 
-    cache->datLen = 0;
+    cli->sndChunkLen = 0;
 
     return EcoRes_Ok;
 }
 
-EcoRes EcoCli_SendReqMsg(EcoHttpCli *cli) {
+static EcoRes SendReqMsg(EcoHttpCli *cli) {
     EcoHttpReq *req = cli->req;
-    SendCache cache;
     char tmpBuf[32];
     int sndLen;
     int wrLen;
     int ret;
     EcoRes res;
 
-    SendCache_Init(&cache);
+    /* Allocate memory for send chunk if needed. */
+    if (cli->sndChunkBuf == NULL) {
+        cli->sndChunkBuf = (uint8_t *)malloc(cli->sndChunkCap);
+        if (cli->sndChunkBuf == NULL) {
+            return EcoRes_NoMem;
+        }
+    }
+
+    /* Clear residual data if needed. */
+    if (cli->sndChunkLen != 0) {
+        cli->sndChunkLen = 0;
+    }
 
     /* Send start line. */
     sndLen = snprintf(tmpBuf, sizeof(tmpBuf), "%s ", EcoHttpMeth_ToStr(req->meth));
-    res = EcoCli_SendData(cli, &cache, tmpBuf, sndLen);
+    res = SendReqData(cli, tmpBuf, sndLen);
     if (res != EcoRes_Ok) {
         return res;
     }
 
+    /* Send URL path. */
     if (req->pathBuf != NULL) {
-        res = EcoCli_SendData(cli, &cache, req->pathBuf, req->pathLen);
+        res = SendReqData(cli, req->pathBuf, req->pathLen);
         if (res != EcoRes_Ok) {
             return res;
         }
     } else {
-        res = EcoCli_SendData(cli, &cache, "/", 1);
+        res = SendReqData(cli, "/", 1);
         if (res != EcoRes_Ok) {
             return res;
         }
     }
 
+    /* Send URL query string. */
     if (req->queryBuf != NULL) {
-        res = EcoCli_SendData(cli, &cache, "?", 1);
+        res = SendReqData(cli, "?", 1);
         if (res != EcoRes_Ok) {
             return res;
         }
 
-        res = EcoCli_SendData(cli, &cache, req->queryBuf, req->queryLen);
+        res = SendReqData(cli, req->queryBuf, req->queryLen);
         if (res != EcoRes_Ok) {
             return res;
         }
     }
 
+    /* Send HTTP version. */
     sndLen = snprintf(tmpBuf, sizeof(tmpBuf), " HTTP/%s\r\n", EcoHttpVer_ToStr(req->ver));
-    res = EcoCli_SendData(cli, &cache, tmpBuf, sndLen);
+    res = SendReqData(cli, tmpBuf, sndLen);
     if (res != EcoRes_Ok) {
         return res;
     }
@@ -1609,43 +1667,43 @@ EcoRes EcoCli_SendReqMsg(EcoHttpCli *cli) {
     for (size_t i = 0; i < cli->req->hdrTab->kvpNum; i++) {
         EcoKvp *curKvp = cli->req->hdrTab->kvpAry + i;
 
-        res = EcoCli_SendData(cli, &cache, curKvp->keyBuf, curKvp->keyLen);
+        res = SendReqData(cli, curKvp->keyBuf, curKvp->keyLen);
         if (res != EcoRes_Ok) {
             return res;
         }
 
-        res = EcoCli_SendData(cli, &cache, ": ", 2);
+        res = SendReqData(cli, ": ", 2);
         if (res != EcoRes_Ok) {
             return res;
         }
 
-        res = EcoCli_SendData(cli, &cache, curKvp->valBuf, curKvp->valLen);
+        res = SendReqData(cli, curKvp->valBuf, curKvp->valLen);
         if (res != EcoRes_Ok) {
             return res;
         }
 
-        res = EcoCli_SendData(cli, &cache, "\r\n", 2);
+        res = SendReqData(cli, "\r\n", 2);
         if (res != EcoRes_Ok) {
             return res;
         }
     }
 
     /* Send empty line. */
-    res = EcoCli_SendData(cli, &cache, "\r\n", 2);
+    res = SendReqData(cli, "\r\n", 2);
     if (res != EcoRes_Ok) {
         return res;
     }
 
     /* Send body data. */
     if (cli->req->bodyBuf != NULL) {
-        res = EcoCli_SendData(cli, &cache, cli->req->bodyBuf, cli->req->bodyLen);
+        res = SendReqData(cli, cli->req->bodyBuf, cli->req->bodyLen);
         if (res != EcoRes_Ok) {
             return res;
         }
     }
 
     /* Flush the send cache. */
-    res = EcoCli_FlushCache(cli, &cache);
+    res = FlushReqData(cli);
     if (res != EcoRes_Ok) {
         return res;
     }
@@ -2136,7 +2194,7 @@ static EcoRes EcoCli_ParseEmpLine(EcoHttpCli *cli, ParseCache *cache, const void
     return EcoRes_Again;
 }
 
-static EcoRes EcoCli_ParseRspMsg(EcoHttpCli *cli) {
+static EcoRes ParseRspMsg(EcoHttpCli *cli) {
     typedef enum _FsmStat {
         FsmStat_StatLine = 0,
         FsmStat_HdrLine,
@@ -2453,13 +2511,13 @@ static EcoRes EcoHttpCli_SendReqAndParseRsp_OpenAndClose(EcoHttpCli *cli) {
     }
 
     /* Send HTTP request. */
-    res = EcoCli_SendReqMsg(cli);
+    res = SendReqMsg(cli);
     if (res != EcoRes_Ok) {
         goto CloseChan;
     }
 
     /* Receive and parse HTTP response. */
-    res = EcoCli_ParseRspMsg(cli);
+    res = ParseRspMsg(cli);
     if (res != EcoRes_Ok) {
         goto CloseChan;
     }
@@ -2504,13 +2562,13 @@ static EcoRes EcoHttpCli_SendReqAndParseRsp_KeepAlive(EcoHttpCli *cli) {
 SendReqMsg:
 
     /* Send HTTP request. */
-    res = EcoCli_SendReqMsg(cli);
+    res = SendReqMsg(cli);
     if (res != EcoRes_Ok) {
         return res;
     }
 
     /* Receive and parse HTTP response. */
-    res = EcoCli_ParseRspMsg(cli);
+    res = ParseRspMsg(cli);
     if (res != EcoRes_Ok) {
         return res;
     }

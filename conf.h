@@ -18,4 +18,15 @@
 /* Default HTTPS port. */
 #define ECO_CONF_DEF_HTTPS_PORT     443
 
+/* Default HTTP message send chunk length.
+
+   When the whole HTTP request message is
+   too long, it will be sent in chunks, and
+   this macro defines the maximum length of
+   each chunk.
+
+   The send chunk buffer will be allocated
+   dynamically on the heap. */
+#define ECO_CONF_DEF_SND_CHUNK_LEN  512
+
 #endif
