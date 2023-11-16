@@ -435,7 +435,8 @@ void EcoHttpReq_Del(EcoHttpReq *req) {
 /* URL parsing cache. */
 typedef struct _EcoUrlParCac {
 
-    /* Scheme. */
+    /* Scheme (optional). */
+    bool schemeSet;
     char schemeBuf[ECO_URL_SCHEME_BUF_LEN];
     size_t schemeLen;
 
@@ -459,6 +460,7 @@ typedef struct _EcoUrlParCac {
 } EcoUrlParCac;
 
 void EcoUrlParCac_Init(EcoUrlParCac *cache) {
+    cache->schemeSet = false;
     memset(cache->schemeBuf, 0, sizeof(cache->schemeBuf));
     cache->schemeLen = 0;
 
@@ -500,6 +502,7 @@ void EcoUrlParCac_Del(EcoUrlParCac *cache) {
 
 EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
     typedef enum _FsmStat {
+        FsmStat_Start,
         FsmStat_Scheme1stCh,
         FsmStat_SchemeOthCh,
         FsmStat_ColonAfterProto,
@@ -518,13 +521,14 @@ EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
         FsmStat_QueryOthCh,
     } FsmStat;
 
-    FsmStat fsmStat = FsmStat_Scheme1stCh;
+    FsmStat fsmStat = FsmStat_Start;
     size_t urlLen = strlen(url);
 
     for (size_t i = 0; i < urlLen; i++) {
         char ch = url[i];
 
         switch (fsmStat) {
+        case FsmStat_Start:
         case FsmStat_Scheme1stCh:
             if ((ch >= 'a' && ch <= 'z') ||
                 (ch >= 'A' && ch <= 'Z')) {
@@ -532,6 +536,14 @@ EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
                 cache->schemeLen = 1;
 
                 fsmStat = FsmStat_SchemeOthCh;
+                break;
+            }
+
+            if (ch >= '0' &&
+                ch <= '9') {
+                cache->ipv4Buf[cache->ipv4Len] = ch - '0';
+
+                fsmStat = FsmStat_Ipv4OthDigit;
                 break;
             }
 
@@ -836,6 +848,7 @@ EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
     }
 
     switch (fsmStat) {
+    case FsmStat_Start:
     case FsmStat_Scheme1stCh:
     case FsmStat_SchemeOthCh:
     case FsmStat_ColonAfterProto:
@@ -896,13 +909,17 @@ static EcoRes EcoHttpReq_SetOpt_Url(EcoHttpReq *req, const char *url) {
     }
 
     /* Check scheme. */
-    if (strcmp(cache->schemeBuf, "http") == 0) {
-        isHttps = false;
-    } else if (strcmp(cache->schemeBuf, "https") == 0) {
-        isHttps = true;
+    if (cache->schemeSet) {
+        if (strcmp(cache->schemeBuf, "http") == 0) {
+            isHttps = false;
+        } else if (strcmp(cache->schemeBuf, "https") == 0) {
+            isHttps = true;
+        } else {
+            res = EcoRes_BadScheme;
+            goto Finally;
+        }
     } else {
-        res = EcoRes_BadScheme;
-        goto Finally;
+        isHttps = false;
     }
 
     /* Copy path and query string. */
