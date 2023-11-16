@@ -50,6 +50,43 @@
 
 
 
+const char *EcoRes_ToStr(EcoRes res) {
+    switch (res) {
+    case EcoRes_Ok: return "Operation success";
+    case EcoRes_Err: return "Operation failure";
+    case EcoRes_NoMem: return "No enough memory";
+    case EcoRes_NotFound: return "Not found";
+    case EcoRes_BadOpt: return "Bad option";
+    case EcoRes_Again: return "Try again";
+    case EcoRes_BadScheme: return "Invalid scheme";
+    case EcoRes_BadHost: return "Invalid host";
+    case EcoRes_BadPort: return "Invalid port";
+    case EcoRes_BadPath: return "Invalid path";
+    case EcoRes_BadQuery: return "Invalid query";
+    case EcoRes_BadFmt: return "Invalid format";
+    case EcoRes_BadChar: return "Invalid character";
+    case EcoRes_BadStatLine: return "Invalid status line";
+    case EcoRes_BadHttpVer: return "Invalid HTTP version";
+    case EcoRes_BadStatCode: return "Invalid status code";
+    case EcoRes_BadReasonPhase: return "Invalid reason phase";
+    case EcoRes_BadHdrLine: return "Invalid header line";
+    case EcoRes_BadHdrKey: return "Invalid header key";
+    case EcoRes_BadHdrVal: return "Invalid header value";
+    case EcoRes_BadEmpLine: return "Invalid empty line";
+    case EcoRes_BadChanOpen: return "Channel open failed";
+    case EcoRes_BadChanSetOpt: return "Channel set option failed";
+    case EcoRes_BadChanRead: return "Channel read failed";
+    case EcoRes_BadChanWrite: return "Channel write failed";
+    case EcoRes_BadChanClose: return "Channel close failed";
+    case EcoRes_ReachEnd: return "Reach end";
+    case EcoRes_NoChanHook: return "No channel hook set";
+    case EcoRes_NoReq: return "No request set";
+    default: return "Unknown result";
+    }
+}
+
+
+
 const char *EcoHttpVer_ToStr(EcoHttpVer ver) {
     switch (ver) {
     case EcoHttpVer_0_9: return "0.9";
@@ -497,7 +534,7 @@ EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
                 ch == '-' ||
                 ch == '.') {
                 if (cache->schemeLen == ECO_URL_SCHEME_MAX_LEN) {
-                    return EcoRes_TooBig;
+                    return EcoRes_BadScheme;
                 }
 
                 cache->schemeBuf[cache->schemeLen] = ch;
@@ -660,7 +697,7 @@ EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
                 cache->pathLen++;
 
                 if (cache->pathLen == ECO_URL_PATH_MAX_LEN) {
-                    return EcoRes_TooBig;
+                    return EcoRes_BadPath;
                 }
 
                 fsmStat = FsmStat_PathSegCh;
@@ -693,7 +730,7 @@ EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
                 cache->pathLen++;
 
                 if (cache->pathLen == ECO_URL_PATH_MAX_LEN) {
-                    return EcoRes_TooBig;
+                    return EcoRes_BadPath;
                 }
 
                 break;
@@ -704,7 +741,7 @@ EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
                 cache->pathLen++;
 
                 if (cache->pathLen == ECO_URL_PATH_MAX_LEN) {
-                    return EcoRes_TooBig;
+                    return EcoRes_BadPath;
                 }
 
                 fsmStat = FsmStat_PathSlash;

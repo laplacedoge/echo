@@ -29,44 +29,49 @@
 #include <stdint.h>
 
 typedef enum _EcoRes {
-    EcoRes_Ok               = 0,
 
-    EcoRes_Err              = -1,
-    EcoRes_NoMem            = -2,
-    EcoRes_NotFound         = -3,
-    EcoRes_BadOpt           = -4,
-    EcoRes_ReachEnd         = -5,
-    EcoRes_NoChanHook       = -6,
-    EcoRes_Again            = -7,
+    /* Operation success. */
+    EcoRes_Ok   = 0,
 
-    EcoRes_BadStatLine      = -8,
-    EcoRes_BadHttpVer       = -9,
-    EcoRes_BadStatCode      = -10,
-    EcoRes_BadReasonPhase   = -11,
-    EcoRes_BadHdrLine       = -12,
-    EcoRes_BadHdrKey        = -13,
-    EcoRes_BadHdrVal        = -14,
-    EcoRes_BadEmpLine       = -15,
+    /* Operation failure. */
+    EcoRes_Err  = -128,
 
-    EcoRes_BadChanOpen      = -16,
-    EcoRes_BadChanSetOpt    = -17,
-    EcoRes_BadChanRead      = -18,
-    EcoRes_BadChanWrite     = -19,
-    EcoRes_BadChanClose     = -20,
+    /* General errors. */
+    EcoRes_NoMem,
+    EcoRes_NotFound,
+    EcoRes_BadOpt,
+    EcoRes_Again,
 
-    EcoRes_TooSmall         = -21,
-    EcoRes_TooBig           = -22,
+    /* Errors used while parsing HTTP URL. */
+    EcoRes_BadScheme,
+    EcoRes_BadHost,
+    EcoRes_BadPort,
+    EcoRes_BadPath,
+    EcoRes_BadQuery,
+    EcoRes_BadFmt,
+    EcoRes_BadChar,
 
-    EcoRes_NoReq            = -23,
-    EcoRes_NoRsp            = -24,
+    /* Errors used while parsing HTTP response. */
+    EcoRes_BadStatLine,
+    EcoRes_BadHttpVer,
+    EcoRes_BadStatCode,
+    EcoRes_BadReasonPhase,
+    EcoRes_BadHdrLine,
+    EcoRes_BadHdrKey,
+    EcoRes_BadHdrVal,
+    EcoRes_BadEmpLine,
 
-    EcoRes_BadScheme        = -25,
-    EcoRes_BadHost          = -26,
-    EcoRes_BadPort          = -27,
-    EcoRes_BadPath          = -28,
-    EcoRes_BadQuery         = -29,
-    EcoRes_BadFmt           = -30,
-    EcoRes_BadChar          = -31,
+    /* Errors returned by channel hooks. */
+    EcoRes_BadChanOpen,
+    EcoRes_BadChanSetOpt,
+    EcoRes_BadChanRead,
+    EcoRes_BadChanWrite,
+    EcoRes_BadChanClose,
+    EcoRes_ReachEnd,
+
+    /* Errors used in HTTP client. */
+    EcoRes_NoChanHook,
+    EcoRes_NoReq,
 } EcoRes;
 
 typedef enum _EcoHttpVer {
@@ -115,18 +120,12 @@ typedef enum _EcoHttpCliOpt {
     EcoHttpCliOpt_Request,
 } EcoHttpCliOpt;
 
-
-
 typedef void * EcoArg;
-
-
 
 typedef enum _EcoChanOpt {
     EcoChanOpt_SyncReadWrite,
     EcoChanOpt_ReadWriteTimeout,
 } EcoChanOpt;
-
-
 
 typedef struct _EcoKvp {
     char *keyBuf;
@@ -142,14 +141,199 @@ typedef struct _EcoHdrTab {
     size_t kvpNum;
 } EcoHdrTab;
 
+typedef struct _EcoChanAddr {
+    uint8_t addr[4];
+    uint16_t port;
+} EcoChanAddr;
+
+typedef struct _EcoHttpReq {
+    EcoHttpMeth meth;
+
+    EcoChanAddr chanAddr;
+
+    char *pathBuf;
+    size_t pathLen;
+
+    char *queryBuf;
+    size_t queryLen;
+
+    EcoHttpVer ver;
+
+    EcoHdrTab *hdrTab;
+
+    /* Body field is not dynamicly allocated. */
+    uint8_t *bodyBuf;
+    size_t bodyLen;
+} EcoHttpReq;
+
+typedef enum _EcoStatCode {
+    EcoStatCode_Unknown             = -1,
+
+    EcoStatCode_Ok                  = 200,
+    EcoStatCode_PartialContent      = 206,
+    EcoStatCode_BadRequest          = 400,
+    EcoStatCode_Unauthorized        = 401,
+    EcoStatCode_NotFound            = 404,
+    EcoStatCode_ServerError         = 500,
+} EcoStatCode;
+
+typedef struct _EcoHttpRsp {
+    EcoHttpVer ver;
+    EcoStatCode statCode;
+    EcoHdrTab *hdrTab;
+    size_t contLen;
+    uint8_t *bodyBuf;
+    size_t bodyLen;
+} EcoHttpRsp;
+
+typedef EcoRes (*EcoChanOpenHook)(EcoChanAddr *addr, EcoArg arg);
+
+typedef EcoRes (*EcoChanCloseHook)(EcoArg arg);
+
+/**
+ * @brief User defined channel option setting hook function.
+ * 
+ * @param opt Option to set.
+ * @param arg Option data to set.
+ * @param hookArg Extra user data which can be set by option `EcoOpt_ChanHookArg`.
+ * 
+ * @return `EcoRes_Ok` for success, otherwise an error code.
+ */
+typedef EcoRes (*EcoChanSetOptHook)(EcoChanOpt opt, EcoArg arg, EcoArg hookArg);
+
+/**
+ * @brief User defined channel read hook function.
+ * 
+ * @param buf Buffer to store read data.
+ * @param len Data length to read.
+ * @param arg Extra user data which can be set by option `EcoOpt_ChanHookArg`.
+ * 
+ * @return The actual length of the read data.
+ *         `EcoRes_ReachEnd` indicates the current channel has been closed.
+ *         Other negative numbers represent corresponding errors.
+ */
+typedef int (*EcoChanReadHook)(void *buf, int len, EcoArg arg);
+
+/**
+ * @brief User defined channel write hook function.
+ * 
+ * @param buf Buffer to store written data.
+ * @param len Data length to write.
+ * @param arg Extra user data which can be set by option `EcoOpt_ChanHookArg`.
+ * 
+ * @return The actual length of the written data.
+ *         `EcoRes_ReachEnd` indicates the current channel has been closed.
+ *         Other negative numbers represent corresponding errors.
+ */
+typedef int (*EcoChanWriteHook)(const void *buf, int len, EcoArg arg);
+
+/**
+ * @brief User defined request header getting hook function.
+ * 
+ * @param hdrNum Total number of headers to write.
+ * @param hdrIdx Index of the current header.
+ * @param keyBuf Header key buffer.
+ * @param keyLen Header key length.
+ * @param valBuf Header value buffer.
+ * @param valLen Header value length.
+ * @param arg Extra user data which can be set by option `EcoOpt_ReqHdrHookArg`.
+ * 
+ * @return `EcoRes_Ok` for success, otherwise an error code.
+ */
+typedef EcoRes (*EcoReqHdrHook)(size_t hdrNum, size_t hdrIdx,
+                                const char *keyBuf, size_t keyLen,
+                                const char *valBuf, size_t valLen,
+                                EcoArg arg);
+
+/**
+ * @brief User defined response header getting hook function.
+ * 
+ * @param hdrNum Total number of headers to write.
+ * @param hdrIdx Index of the current header.
+ * @param keyBuf Header key buffer.
+ * @param keyLen Header key length.
+ * @param valBuf Header value buffer.
+ * @param valLen Header value length.
+ * @param arg Extra user data which can be set by option `EcoOpt_RspHdrHookArg`.
+ * 
+ * @return `EcoRes_Ok` for success, otherwise an error code.
+ */
+typedef EcoRes (*EcoRspHdrHook)(size_t hdrNum, size_t hdrIdx,
+                                const char *keyBuf, size_t keyLen,
+                                const char *valBuf, size_t valLen,
+                                EcoArg arg);
+
+/**
+ * @brief User defined body write hook function.
+ * 
+ * @note When arg `off` equals 0, it indicates this is the first packet.
+ *       When arg `len` equals 0, it indicates this is the last packet.
+ * 
+ * @param off Data offset.
+ * @param buf Buffer to store written data.
+ * @param len Data length to write.
+ * @param arg Extra user data which can be set by option `EcoOpt_BodyHookArg`.
+ * 
+ * @return The actual length of the written data.
+ *         Negative numbers represent corresponding errors.
+ */
+typedef int (*EcoBodyWriteHook)(int off, const void *buf, int len, EcoArg arg);
+
+typedef struct _EcoHttpCli {
+    EcoArg chanHookArg;
+    EcoChanOpenHook chanOpenHook;
+    EcoChanCloseHook chanCloseHook;
+    EcoChanSetOptHook chanSetOptHook;
+    EcoChanReadHook chanReadHook;
+    EcoChanWriteHook chanWriteHook;
+    EcoArg reqHdrHookArg;
+    EcoRspHdrHook reqHdrHook;
+    EcoArg rspHdrHookArg;
+    EcoRspHdrHook rspHdrHook;
+    EcoArg bodyHookArg;
+    EcoBodyWriteHook bodyWriteHook;
+
+    /* Flags. */
+    uint32_t chanOpened: 1;
+    uint32_t keepAlive: 1;
+
+    EcoHttpReq *req;
+    EcoHttpRsp *rsp;
+} EcoHttpCli;
+
+/**
+ * @brief Convert `EcoRes` to a descriptive string.
+ * 
+ * @param res Result to be converted.
+ */
+const char *EcoRes_ToStr(EcoRes res);
 
 
+
+/**
+ * @brief Initialize a header table.
+ * 
+ * @param tab Header table.
+ */
 void EcoHdrTab_Init(EcoHdrTab *tab);
 
+/**
+ * @brief Create a new header table.
+ */
 EcoHdrTab *EcoHdrTab_New(void);
 
+/**
+ * @brief Deinitialize a header table.
+ * 
+ * @param tab Header table.
+ */
 void EcoHdrTab_Deinit(EcoHdrTab *tab);
 
+/**
+ * @brief Delete a header table.
+ * 
+ * @param tab Header table.
+ */
 void EcoHdrTab_Del(EcoHdrTab *tab);
 
 /**
@@ -200,206 +384,121 @@ EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp **kvp);
 
 
 
-typedef struct _EcoChanAddr {
-    uint8_t addr[4];
-    uint16_t port;
-} EcoChanAddr;
-
-typedef struct _EcoHttpReq {
-    EcoHttpMeth meth;
-
-    EcoChanAddr chanAddr;
-
-    char *pathBuf;
-    size_t pathLen;
-
-    char *queryBuf;
-    size_t queryLen;
-
-    EcoHttpVer ver;
-
-    EcoHdrTab *hdrTab;
-
-    /* Body field is not dynamicly allocated. */
-    uint8_t *bodyBuf;
-    size_t bodyLen;
-} EcoHttpReq;
-
+/**
+ * @brief Initialize a HTTP request.
+ * 
+ * @param req HTTP request.
+ */
 void EcoHttpReq_Init(EcoHttpReq *req);
 
+/**
+ * @brief Create a new HTTP request.
+ */
 EcoHttpReq *EcoHttpReq_New(void);
 
+/**
+ * @brief Deinitialize a HTTP request.
+ * 
+ * @param req HTTP request.
+ */
 void EcoHttpReq_Deinit(EcoHttpReq *req);
 
+/**
+ * @brief Delete a HTTP request.
+ * @note This function will also delete the header table if it exists.
+ * 
+ * @param req HTTP request.
+ */
 void EcoHttpReq_Del(EcoHttpReq *req);
 
+/**
+ * @brief Set a HTTP request option.
+ * 
+ * @param req HTTP request.
+ * @param opt Option to set.
+ * @param arg Option data to set.
+ * 
+ * @return `EcoRes_Ok` for success, otherwise an error code.
+ */
 EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg);
 
 
 
-typedef enum _EcoStatCode {
-    EcoStatCode_Unknown             = -1,
-
-    EcoStatCode_Ok                  = 200,
-    EcoStatCode_PartialContent      = 206,
-    EcoStatCode_BadRequest          = 400,
-    EcoStatCode_Unauthorized        = 401,
-    EcoStatCode_NotFound            = 404,
-    EcoStatCode_ServerError         = 500,
-} EcoStatCode;
-
-typedef struct _EcoHttpRsp {
-    EcoHttpVer ver;
-    EcoStatCode statCode;
-    EcoHdrTab *hdrTab;
-    size_t contLen;
-    uint8_t *bodyBuf;
-    size_t bodyLen;
-} EcoHttpRsp;
-
+/**
+ * @brief Initialize a HTTP response.
+ * 
+ * @param rsp HTTP response.
+ */
 void EcoHttpRsp_Init(EcoHttpRsp *rsp);
 
+/**
+ * @brief Create a new HTTP response.
+ */
 EcoHttpRsp *EcoHttpRsp_New(void);
 
+/**
+ * @brief Deinitialize a HTTP response.
+ * 
+ * @param rsp HTTP response.
+ */
 void EcoHttpRsp_Deinit(EcoHttpRsp *rsp);
 
+/**
+ * @brief Delete a HTTP response.
+ * @note This function will also delete the header
+ *       table and body buffer if they exist.
+ * 
+ * @param rsp HTTP response.
+ */
 void EcoHttpRsp_Del(EcoHttpRsp *rsp);
 
 
 
-typedef EcoRes (*EcoChanOpenHook)(EcoChanAddr *addr, EcoArg arg);
-
-typedef EcoRes (*EcoChanCloseHook)(EcoArg arg);
-
 /**
- * @brief User defined channel option setting hook function.
+ * @brief Initialize a HTTP client.
  * 
- * @param opt Option to set.
- * @param arg Option data to set.
- * @param hookArg Extra user data which can be set by option `EcoOpt_ChanHookArg`.
+ * @param cli HTTP client.
  */
-typedef EcoRes (*EcoChanSetOptHook)(EcoChanOpt opt, EcoArg arg, EcoArg hookArg);
-
-/**
- * @brief User defined channel read hook function.
- * 
- * @param buf Buffer to store read data.
- * @param len Data length to read.
- * @param arg Extra user data which can be set by option `EcoOpt_ChanHookArg`.
- * 
- * @return The actual length of the read data.
- *         `EcoRes_ReachEnd` indicates the current channel has been closed.
- *         Other negative numbers represent corresponding errors.
- */
-typedef int (*EcoChanReadHook)(void *buf, int len, EcoArg arg);
-
-/**
- * @brief User defined channel write hook function.
- * 
- * @param buf Buffer to store written data.
- * @param len Data length to write.
- * @param arg Extra user data which can be set by option `EcoOpt_ChanHookArg`.
- * 
- * @return The actual length of the written data.
- *         `EcoRes_ReachEnd` indicates the current channel has been closed.
- *         Other negative numbers represent corresponding errors.
- */
-typedef int (*EcoChanWriteHook)(const void *buf, int len, EcoArg arg);
-
-
-
-/**
- * @brief User defined request header getting hook function.
- * 
- * @param hdrNum Total number of headers to write.
- * @param hdrIdx Index of the current header.
- * @param keyBuf Header key buffer.
- * @param keyLen Header key length.
- * @param valBuf Header value buffer.
- * @param valLen Header value length.
- * @param arg Extra user data which can be set by option `EcoOpt_ReqHdrHookArg`.
- * 
- * @return `EcoRes_Ok` for success.
- *         Negative numbers represent corresponding errors.
- */
-typedef EcoRes (*EcoReqHdrHook)(size_t hdrNum, size_t hdrIdx,
-                                const char *keyBuf, size_t keyLen,
-                                const char *valBuf, size_t valLen,
-                                EcoArg arg);
-
-
-
-/**
- * @brief User defined response header getting hook function.
- * 
- * @param hdrNum Total number of headers to write.
- * @param hdrIdx Index of the current header.
- * @param keyBuf Header key buffer.
- * @param keyLen Header key length.
- * @param valBuf Header value buffer.
- * @param valLen Header value length.
- * @param arg Extra user data which can be set by option `EcoOpt_RspHdrHookArg`.
- * 
- * @return `EcoRes_Ok` for success.
- *         Negative numbers represent corresponding errors.
- */
-typedef EcoRes (*EcoRspHdrHook)(size_t hdrNum, size_t hdrIdx,
-                                const char *keyBuf, size_t keyLen,
-                                const char *valBuf, size_t valLen,
-                                EcoArg arg);
-
-
-
-/**
- * @brief User defined body write hook function.
- * 
- * @note When arg `off` equals 0, it indicates this is the first packet.
- *       When arg `len` equals 0, it indicates this is the last packet.
- * 
- * @param off Data offset.
- * @param buf Buffer to store written data.
- * @param len Data length to write.
- * @param arg Extra user data which can be set by option `EcoOpt_BodyHookArg`.
- * 
- * @return The actual length of the written data.
- *         Negative numbers represent corresponding errors.
- */
-typedef int (*EcoBodyWriteHook)(int off, const void *buf, int len, EcoArg arg);
-
-
-
-typedef struct _EcoHttpCli {
-    EcoArg chanHookArg;
-    EcoChanOpenHook chanOpenHook;
-    EcoChanCloseHook chanCloseHook;
-    EcoChanSetOptHook chanSetOptHook;
-    EcoChanReadHook chanReadHook;
-    EcoChanWriteHook chanWriteHook;
-    EcoArg reqHdrHookArg;
-    EcoRspHdrHook reqHdrHook;
-    EcoArg rspHdrHookArg;
-    EcoRspHdrHook rspHdrHook;
-    EcoArg bodyHookArg;
-    EcoBodyWriteHook bodyWriteHook;
-
-    /* Flags. */
-    uint32_t chanOpened: 1;
-    uint32_t keepAlive: 1;
-
-    EcoHttpReq *req;
-    EcoHttpRsp *rsp;
-} EcoHttpCli;
-
 void EcoHttpCli_Init(EcoHttpCli *cli);
 
+/**
+ * @brief Create a new HTTP client.
+ */
 EcoHttpCli *EcoHttpCli_New(void);
 
+/**
+ * @brief Deinitialize a HTTP client.
+ * 
+ * @param cli HTTP client.
+ */
 void EcoHttpCli_Deinit(EcoHttpCli *cli);
 
+/**
+ * @brief Delete a HTTP client.
+ * @note This function will also delete the request and response if they exist.
+ * 
+ * @param cli HTTP client.
+ */
 void EcoHttpCli_Del(EcoHttpCli *cli);
 
+/**
+ * @brief Set a HTTP client option.
+ * 
+ * @param cli HTTP client.
+ * @param opt Option to set.
+ * @param arg Option data to set.
+ * 
+ * @return `EcoRes_Ok` for success, otherwise an error code.
+ */
 EcoRes EcoHttpCli_SetOpt(EcoHttpCli *cli, EcoHttpCliOpt opt, EcoArg arg);
 
+/**
+ * @brief Issue a HTTP request.
+ * 
+ * @param cli HTTP client.
+ * 
+ * @return `EcoRes_Ok` for success, otherwise an error code.
+ */
 EcoRes EcoHttpCli_Issue(EcoHttpCli *cli);
 
 #endif
