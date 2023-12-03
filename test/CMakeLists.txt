@@ -2,19 +2,19 @@ include_directories(3rd)
 
 link_libraries(echo)
 
-add_executable(basic_header
+add_executable(testing
     test.c
     basic_header.c
 )
 
-add_custom_target(basic_header_test
-    DEPENDS basic_header
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/basic_header
-    COMMENT "Testing basic header operations..."
+add_custom_target(run_testing
+    DEPENDS testing
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/testing
+    COMMENT "Testing..."
 )
 
 add_custom_target(test
-    DEPENDS basic_header_test
+    DEPENDS run_testing
 )
 
 add_executable(test-request test-request.c)

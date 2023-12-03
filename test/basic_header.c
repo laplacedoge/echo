@@ -2,7 +2,7 @@
 
 #include "greatest.h"
 
-TEST AddCommonHeader(void) {
+TEST AddCommonHeaderSeparately(void) {
     EcoHdrTab *tab;
     EcoRes res;
 
@@ -89,7 +89,7 @@ TEST AddCommonHeader(void) {
     PASS();
 }
 
-TEST AddWeirdHeader(void) {
+TEST AddWeirdHeaderSeparately(void) {
     EcoHdrTab *tab;
     EcoRes res;
 
@@ -104,7 +104,7 @@ TEST AddWeirdHeader(void) {
     PASS();
 }
 
-TEST AddInvalidHeaderName(void) {
+TEST AddInvalidHeaderKeySeparately(void) {
     EcoHdrTab *tab;
     EcoRes res;
 
@@ -182,7 +182,7 @@ TEST AddInvalidHeaderName(void) {
     PASS();
 }
 
-TEST AddInvalidHeaderValue(void) {
+TEST AddInvalidHeaderValueSeparately(void) {
     EcoHdrTab *tab;
     EcoRes res;
 
@@ -206,7 +206,7 @@ TEST AddInvalidHeaderValue(void) {
     PASS();
 }
 
-TEST OverwriteHeader(void) {
+TEST OverwriteHeaderSeparately(void) {
     EcoHdrTab *tab;
     EcoRes res;
 
@@ -272,10 +272,78 @@ TEST OverwriteHeader(void) {
     PASS();
 }
 
+TEST AddValidHeaderLine(void) {
+    EcoHdrTab *tab;
+    EcoRes res;
+
+    tab = EcoHdrTab_New();
+    ASSERT_NEQ(NULL, tab);
+
+    res = EcoHdrTab_AddLine(tab, "Accept: application/json");
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+    ASSERT_EQ_FMT(1UL, tab->kvpNum, "%zu");
+    ASSERT_STR_EQ("accept", tab->kvpAry[0].keyBuf);
+    ASSERT_STR_EQ("application/json", tab->kvpAry[0].valBuf);
+
+    res = EcoHdrTab_AddLine(tab, "Accept: text/html");
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+    ASSERT_EQ_FMT(1UL, tab->kvpNum, "%zu");
+    ASSERT_STR_EQ("accept", tab->kvpAry[0].keyBuf);
+    ASSERT_STR_EQ("text/html", tab->kvpAry[0].valBuf);
+
+    res = EcoHdrTab_AddLine(tab, "Accept-Charset:UTF-8");
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+    ASSERT_EQ_FMT(2UL, tab->kvpNum, "%zu");
+    ASSERT_STR_EQ("accept-charset", tab->kvpAry[1].keyBuf);
+    ASSERT_STR_EQ("UTF-8", tab->kvpAry[1].valBuf);
+
+    res = EcoHdrTab_AddLine(tab, "Accept-Encoding:             gzip");
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+    ASSERT_EQ_FMT(3UL, tab->kvpNum, "%zu");
+    ASSERT_STR_EQ("accept-encoding", tab->kvpAry[2].keyBuf);
+    ASSERT_STR_EQ("gzip", tab->kvpAry[2].valBuf);
+
+    EcoHdrTab_Del(tab);
+
+    PASS();
+}
+
+TEST AddInvalidHeaderLine(void) {
+    EcoHdrTab *tab;
+    EcoRes res;
+
+    tab = EcoHdrTab_New();
+    ASSERT_NEQ(NULL, tab);
+
+    res = EcoHdrTab_AddLine(tab, "Accept");
+    ASSERT_EQ_FMT(EcoRes_BadHdrLine, res, "%d");
+
+    res = EcoHdrTab_AddLine(tab, "Accept;: application/json");
+    ASSERT_EQ_FMT(EcoRes_BadHdrKey, res, "%d");
+
+    res = EcoHdrTab_AddLine(tab, "{Accept: application/json");
+    ASSERT_EQ_FMT(EcoRes_BadHdrKey, res, "%d");
+
+    res = EcoHdrTab_AddLine(tab, "Accept]: application/json");
+    ASSERT_EQ_FMT(EcoRes_BadHdrKey, res, "%d");
+
+    res = EcoHdrTab_AddLine(tab, "Accept: \rapplication/json");
+    ASSERT_EQ_FMT(EcoRes_BadHdrVal, res, "%d");
+
+    res = EcoHdrTab_AddLine(tab, "Accept: application/json\n");
+    ASSERT_EQ_FMT(EcoRes_BadHdrVal, res, "%d");
+
+    EcoHdrTab_Del(tab);
+
+    PASS();
+}
+
 SUITE(BasicHeaderSuite) {
-    RUN_TEST(AddCommonHeader);
-    RUN_TEST(AddWeirdHeader);
-    RUN_TEST(AddInvalidHeaderName);
-    RUN_TEST(AddInvalidHeaderValue);
-    RUN_TEST(OverwriteHeader);
+    RUN_TEST(AddCommonHeaderSeparately);
+    RUN_TEST(AddWeirdHeaderSeparately);
+    RUN_TEST(AddInvalidHeaderKeySeparately);
+    RUN_TEST(AddInvalidHeaderValueSeparately);
+    RUN_TEST(OverwriteHeaderSeparately);
+    RUN_TEST(AddValidHeaderLine);
+    RUN_TEST(AddInvalidHeaderLine);
 }

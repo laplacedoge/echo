@@ -355,7 +355,8 @@ void EcoHdrTab_Deinit(EcoHdrTab *tab);
 void EcoHdrTab_Del(EcoHdrTab *tab);
 
 /**
- * @brief Add a key-value pair to the header table.
+ * @brief Add a header to the header table.
+ * @note Header key and value should be passed separately.
  * 
  * @param tab Header table.
  * @param key Key string.
@@ -364,7 +365,19 @@ void EcoHdrTab_Del(EcoHdrTab *tab);
 EcoRes EcoHdrTab_Add(EcoHdrTab *tab, const char *key, const char *val);
 
 /**
- * @brief Add a key-value pair to the header table with format string.
+ * @brief Add a header to the header table.
+ * @note `line` is a string consists both header key and value.
+ *        For example: "Accept: application/json".
+ * 
+ * @param tab Header table.
+ * @param line Header string.
+ */
+EcoRes EcoHdrTab_AddLine(EcoHdrTab *tab, const char *line);
+
+/**
+ * @brief Add a header to the header table.
+ * @note Header key and value should be passed separately, of which `fmt` is the
+ *       format string of the header key.
  * 
  * @param tab Header table.
  * @param key Key string.

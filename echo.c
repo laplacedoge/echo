@@ -126,16 +126,12 @@ void EcoHttpRsp_Del(EcoHttpRsp *cli);
 
 #define KVP_ARY_INIT_CAP    8
 
-static uint32_t EcoHash_HashKey(const char *str) {
-    uint8_t *ptr = (uint8_t *)str;
+static uint32_t EcoHash_HashBuf(const void *buf, size_t len) {
     uint32_t hash = 5381;
     uint8_t byte;
 
-    while (true) {
-        byte = *ptr;
-        if (byte == '\0') {
-            break;
-        }
+    for (size_t i = 0; i < len; i++) {
+        byte = ((uint8_t *)buf)[i];
 
         if (byte >= 'A' &&
             byte <= 'Z') {
@@ -143,11 +139,13 @@ static uint32_t EcoHash_HashKey(const char *str) {
         }
 
         hash = ((hash << 5) + hash) + byte;
-
-        ptr++;
     }
 
     return hash;
+}
+
+static uint32_t EcoHash_HashStr(const char *str) {
+    return EcoHash_HashBuf(str, strlen(str));
 }
 
 void EcoHdrTab_Init(EcoHdrTab *tab) {
@@ -207,9 +205,11 @@ static void LowHdrKey(char *keyBuf, size_t keyLen) {
 }
 
 /**
- * @brief Validate header key string.
+ * @brief Check if the byte is valid in header key string.
+ * 
+ * @param byte Byte to be checked.
  */
-static EcoRes ChkHdrKey(const char *key) {
+static bool IsHdrKeyByte(uint8_t byte) {
     static const uint8_t lookUpTab[] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -228,10 +228,19 @@ static EcoRes ChkHdrKey(const char *key) {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     };
-    size_t keyLen = strlen(key);
 
+    return lookUpTab[byte] == 1 ? true : false;
+}
+
+/**
+ * @brief Validate header key string.
+ * 
+ * @param keyBuf Key string buffer.
+ * @param keyLen Key string length.
+ */
+static EcoRes ChkHdrKey(const char *keyBuf, size_t keyLen) {
     for (size_t i = 0; i < keyLen; i++) {
-        if (lookUpTab[key[i]] == 0) {
+        if (IsHdrKeyByte(keyBuf[i]) == false) {
             return EcoRes_BadHdrKey;
         }
     }
@@ -240,9 +249,11 @@ static EcoRes ChkHdrKey(const char *key) {
 }
 
 /**
- * @brief Validate header value string.
+ * @brief Check if the byte is valid in header value string.
+ * 
+ * @param byte Byte to be checked.
  */
-static EcoRes ChkHdrVal(const char *val) {
+static bool IsHdrValByte(uint8_t byte) {
     static const uint8_t lookUpTab[] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -261,10 +272,19 @@ static EcoRes ChkHdrVal(const char *val) {
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     };
-    size_t valLen = strlen(val);
 
+    return lookUpTab[byte] == 1 ? true : false;
+}
+
+/**
+ * @brief Validate header value string.
+ * 
+ * @param valBuf Value string buffer.
+ * @param valLen Value string length.
+ */
+static EcoRes ChkHdrVal(const char *valBuf, size_t valLen) {
     for (size_t i = 0; i < valLen; i++) {
-        if (lookUpTab[val[i]] == 0) {
+        if (IsHdrValByte(valBuf[i]) == false) {
             return EcoRes_BadHdrVal;
         }
     }
@@ -272,101 +292,249 @@ static EcoRes ChkHdrVal(const char *val) {
     return EcoRes_Ok;
 }
 
-EcoRes EcoHdrTab_Add(EcoHdrTab *tab, const char *key, const char *val) {
-    EcoKvp *curKvp;
-    EcoRes res;
+/**
+ * @brief Try to search a key in the given header table.
+ * 
+ * @param tab Header table.
+ * @param keyBuf Key string buffer.
+ * @param keyLen Key string length.
+ * @param kvp Key-value pair result.
+ */
+static EcoRes EcoHdrTab_FindByBufAndLen(EcoHdrTab *tab, const char *keyBuf,
+                                        size_t keyLen, EcoKvp **kvp) {
+    uint32_t keyHash = EcoHash_HashBuf(keyBuf, keyLen);
 
-    res = ChkHdrKey(key);
-    if (res != EcoRes_Ok) {
-        return res;
+    for (size_t i = 0; i < tab->kvpNum; i++) {
+        EcoKvp *curKvp = tab->kvpAry + i;
+
+        if (keyHash == curKvp->keyHash &&
+            keyLen == curKvp->keyLen &&
+            strncasecmp(keyBuf, curKvp->keyBuf, curKvp->keyLen) == 0) {
+            if (kvp != NULL) {
+                *kvp = curKvp;
+            }
+
+            return EcoRes_Ok;
+        }
     }
 
-    res = ChkHdrVal(val);
-    if (res != EcoRes_Ok) {
-        return res;
-    }
+    return EcoRes_NotFound;
+}
 
-    if (EcoHdrTab_Find(tab, key, &curKvp) == EcoRes_NotFound) {
-        char *keyBuf;
-        char *valBuf;
-        size_t keyLen;
-        size_t valLen;
-        uint32_t keyHash;
-
+static EcoRes EcoHdrTab_GetNextSlot(EcoHdrTab *tab, EcoKvp **kvp) {
+    if (tab->kvpAry == NULL) {
+        tab->kvpAry = (EcoKvp *)malloc(sizeof(EcoKvp) * KVP_ARY_INIT_CAP);
         if (tab->kvpAry == NULL) {
-            tab->kvpAry = (EcoKvp *)malloc(sizeof(EcoKvp) * KVP_ARY_INIT_CAP);
+            return EcoRes_NoMem;
+        }
+
+        tab->kvpCap = KVP_ARY_INIT_CAP;
+        tab->kvpNum = 0;
+
+        *kvp = tab->kvpAry;
+    } else {
+        if (tab->kvpNum + 1 > tab->kvpCap) {
+            tab->kvpAry = (EcoKvp *)realloc(tab->kvpAry, sizeof(EcoKvp) * tab->kvpCap * 2);
             if (tab->kvpAry == NULL) {
                 return EcoRes_NoMem;
             }
 
-            tab->kvpCap = KVP_ARY_INIT_CAP;
-            tab->kvpNum = 0;
-
-            curKvp = tab->kvpAry;
-        } else {
-            if (tab->kvpNum + 1 > tab->kvpCap) {
-                tab->kvpAry = (EcoKvp *)realloc(tab->kvpAry, sizeof(EcoKvp) * tab->kvpCap * 2);
-                if (tab->kvpAry == NULL) {
-                    return EcoRes_NoMem;
-                }
-
-                tab->kvpCap *= 2;
-            }
-
-            curKvp = tab->kvpAry + tab->kvpNum;
+            tab->kvpCap *= 2;
         }
 
-        keyLen = strlen(key);
-        valLen = strlen(val);
+        *kvp = tab->kvpAry + tab->kvpNum;
+    }
 
-        keyBuf = (char *)malloc(keyLen + 1);
-        if (keyBuf == NULL) {
+    return EcoRes_Ok;
+}
+
+static EcoRes EcoHdrTab_AddByBufAndLen(EcoHdrTab *tab,
+                                       const void *keyBuf, size_t keyLen,
+                                       const void *valBuf, size_t valLen) {
+    EcoKvp *kvp;
+    EcoRes res;
+
+    res = EcoHdrTab_FindByBufAndLen(tab, keyBuf, keyLen, &kvp);
+    if (res == EcoRes_NotFound) {
+        EcoHdrTab_GetNextSlot(tab, &kvp);
+
+        kvp->keyBuf = (char *)malloc(keyLen + 1);
+        if (kvp->keyBuf == NULL) {
             return EcoRes_NoMem;
         }
 
-        valBuf = (char *)malloc(valLen + 1);
-        if (valBuf == NULL) {
-            free(keyBuf);
+        kvp->valBuf = (char *)malloc(valLen + 1);
+        if (kvp->valBuf == NULL) {
+            free(kvp->keyBuf);
+            kvp->keyBuf = NULL;
 
             return EcoRes_NoMem;
         }
 
-        memcpy(keyBuf, key, keyLen + 1);
-        memcpy(valBuf, val, valLen + 1);
+        memcpy(kvp->keyBuf, keyBuf, keyLen);
+        kvp->keyBuf[keyLen] = '\0';
+        memcpy(kvp->valBuf, valBuf, valLen);
+        kvp->valBuf[valLen] = '\0';
 
-        LowHdrKey(keyBuf, keyLen);
+        kvp->keyLen = keyLen;
+        kvp->valLen = valLen;
 
-        keyHash = EcoHash_HashKey(keyBuf);
+        LowHdrKey(kvp->keyBuf, kvp->keyLen);
 
-        curKvp->keyBuf = keyBuf;
-        curKvp->valBuf = valBuf;
-        curKvp->keyLen = keyLen;
-        curKvp->valLen = valLen;
-        curKvp->keyHash = keyHash;
+        kvp->keyHash = EcoHash_HashBuf(kvp->keyBuf, kvp->keyLen);;
 
         tab->kvpNum++;
 
         return EcoRes_Ok;
     } else {
-        char *valBuf;
-        size_t valLen;
+        char *newBuf;
 
-        valLen = strlen(val);
-
-        valBuf = (char *)malloc(valLen + 1);
-        if (valBuf == NULL) {
+        newBuf = (char *)malloc(valLen + 1);
+        if (newBuf == NULL) {
             return EcoRes_NoMem;
         }
 
-        memcpy(valBuf, val, valLen + 1);
+        free(kvp->valBuf);
+        memcpy(newBuf, valBuf, valLen);
+        newBuf[valLen] = '\0';
 
-        free(curKvp->valBuf);
-
-        curKvp->valBuf = valBuf;
-        curKvp->valLen = valLen;
+        kvp->valBuf = newBuf;
+        kvp->valLen = valLen;
 
         return EcoRes_Ok;
     }
+}
+
+EcoRes EcoHdrTab_Add(EcoHdrTab *tab, const char *key, const char *val) {
+    size_t keyLen = strlen(key);
+    size_t valLen = strlen(val);
+    EcoKvp *curKvp;
+    EcoRes res;
+
+    res = ChkHdrKey(key, keyLen);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    res = ChkHdrVal(val, valLen);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    res = EcoHdrTab_AddByBufAndLen(tab, key, keyLen, val, valLen);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    return EcoRes_Ok;
+}
+
+EcoRes EcoHdrTab_AddLine(EcoHdrTab *tab, const char *line) {
+    typedef enum _FsmStat {
+        FsmStat_1stKeyCh,
+        FsmStat_OthKeyChOrColon,
+        FsmStat_1stSpcOr1stValCh,
+        FsmStat_OthSpcOr1stValCh,
+        FsmStat_OthValCh,
+    } FsmStat;
+
+    FsmStat fsmStat = FsmStat_1stKeyCh;
+    size_t lineLen = strlen(line);
+    const char *colon;
+    const char *valBuf;
+    size_t keyLen;
+    size_t valLen;
+    EcoRes res;
+
+    if (lineLen < 2) {
+        return EcoRes_BadHdrLine;
+    }
+
+    for (size_t i = 0; i < lineLen; i++) {
+        uint8_t byte = line[i];
+
+        switch (fsmStat) {
+        case FsmStat_1stKeyCh:
+            if (IsHdrKeyByte(byte)) {
+                fsmStat = FsmStat_OthKeyChOrColon;
+                break;
+            }
+
+            return EcoRes_BadHdrKey;
+
+        case FsmStat_OthKeyChOrColon:
+            if (byte == ':') {
+                colon = line + i;
+                fsmStat = FsmStat_1stSpcOr1stValCh;
+                break;
+            }
+
+            if (IsHdrKeyByte(byte)) {
+                break;
+            }
+
+            return EcoRes_BadHdrKey;
+
+        case FsmStat_1stSpcOr1stValCh:
+            if (byte == ' ') {
+                fsmStat = FsmStat_OthSpcOr1stValCh;
+                break;
+            }
+
+            if (IsHdrValByte(byte)) {
+                valBuf = line + i;
+                fsmStat = FsmStat_OthValCh;
+                break;
+            }
+
+            return EcoRes_BadHdrVal;
+
+        case FsmStat_OthSpcOr1stValCh:
+            if (byte == ' ') {
+                break;
+            }
+
+            if (IsHdrValByte(byte)) {
+                valBuf = line + i;
+                fsmStat = FsmStat_OthValCh;
+                break;
+            }
+
+            return EcoRes_BadHdrVal;
+
+        case FsmStat_OthValCh:
+            if (IsHdrValByte(byte)) {
+                break;
+            }
+
+            return EcoRes_BadHdrVal;
+        }
+    }
+
+    keyLen = (size_t)(colon - line);
+
+    switch (fsmStat) {
+    case FsmStat_1stKeyCh:
+    case FsmStat_OthKeyChOrColon:
+        return EcoRes_BadHdrLine;
+
+    case FsmStat_1stSpcOr1stValCh:
+    case FsmStat_OthSpcOr1stValCh:
+        valBuf = "";
+        valLen = 0;
+        break;
+
+    case FsmStat_OthValCh:
+        valLen = lineLen - (valBuf - line);
+        break;
+    }
+
+    res = EcoHdrTab_AddByBufAndLen(tab, line, keyLen, valBuf, valLen);
+    if (res != EcoRes_Ok) {
+        return res;
+    }
+
+    return EcoRes_Ok;
 }
 
 EcoRes EcoHdrTab_AddFmt(EcoHdrTab *tab, const char *key, const char *fmt, ...) {
@@ -422,33 +590,7 @@ void EcoHdrTab_Clear(EcoHdrTab *tab) {
 }
 
 EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp **kvp) {
-    const char *keyBuf;
-    size_t keyLen;
-    uint32_t keyHash;
-
-    if (tab == NULL) {
-        return EcoRes_NotFound;
-    }
-
-    keyBuf = key;
-    keyLen = strlen(key);
-    keyHash = EcoHash_HashKey(keyBuf);
-
-    for (size_t i = 0; i < tab->kvpNum; i++) {
-        EcoKvp *curKvp = tab->kvpAry + i;
-
-        if (keyHash == curKvp->keyHash &&
-            keyLen == curKvp->keyLen &&
-            strcasecmp(keyBuf, curKvp->keyBuf) == 0) {
-            if (kvp != NULL) {
-                *kvp = curKvp;
-            }
-
-            return EcoRes_Ok;
-        }
-    }
-
-    return EcoRes_NotFound;
+    return EcoHdrTab_FindByBufAndLen(tab, key, strlen(key), kvp);
 }
 
 void EcoHttpReq_Init(EcoHttpReq *req) {
