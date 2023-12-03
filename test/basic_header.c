@@ -89,6 +89,21 @@ TEST AddCommonHeader(void) {
     PASS();
 }
 
+TEST AddWeirdHeader(void) {
+    EcoHdrTab *tab;
+    EcoRes res;
+
+    tab = EcoHdrTab_New();
+    ASSERT_NEQ(NULL, tab);
+
+    res = EcoHdrTab_Add(tab, "Accept", "");
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+
+    EcoHdrTab_Del(tab);
+
+    PASS();
+}
+
 TEST AddInvalidHeaderName(void) {
     EcoHdrTab *tab;
     EcoRes res;
@@ -259,6 +274,7 @@ TEST OverwriteHeader(void) {
 
 SUITE(BasicHeaderSuite) {
     RUN_TEST(AddCommonHeader);
+    RUN_TEST(AddWeirdHeader);
     RUN_TEST(AddInvalidHeaderName);
     RUN_TEST(AddInvalidHeaderValue);
     RUN_TEST(OverwriteHeader);
