@@ -538,34 +538,49 @@ EcoRes EcoHdrTab_AddLine(EcoHdrTab *tab, const char *line) {
 }
 
 EcoRes EcoHdrTab_AddFmt(EcoHdrTab *tab, const char *key, const char *fmt, ...) {
-    char *valBuf;
+    char *valBuf = NULL;
+    size_t keyLen;
     size_t valLen;
-    va_list ap;
+    size_t bufLen;
+    va_list args;
     EcoRes res;
+    int ret;
 
-    va_start(ap, fmt);
-    valLen = vsnprintf(NULL, 0, fmt, ap);
-    va_end(ap);
+    va_start(args, fmt);
+    ret = vsnprintf(NULL, 0, fmt, args);
+    va_end(args);
 
-    valBuf = (char *)malloc(valLen + 1);
+    if (ret < 0) {
+        return EcoRes_BadArg;
+    }
+
+    valLen = (size_t)ret;
+    bufLen = valLen + 1;
+
+    valBuf = (char *)malloc(bufLen);
     if (valBuf == NULL) {
         return EcoRes_NoMem;
     }
 
-    va_start(ap, fmt);
-    vsnprintf(valBuf, valLen + 1, fmt, ap);
-    va_end(ap);
+    va_start(args, fmt);
+    vsnprintf(valBuf, bufLen, fmt, args);
+    va_end(args);
 
-    res = EcoHdrTab_Add(tab, key, valBuf);
+    keyLen = strlen(key);
+
+    res = EcoHdrTab_AddByBufAndLen(tab, key, keyLen, valBuf, valLen);
     if (res != EcoRes_Ok) {
-        free(valBuf);
-
-        return res;
+        goto Finally;
     }
 
-    free(valBuf);
+    res = EcoRes_Ok;
 
-    return EcoRes_Ok;
+Finally:
+    if (valBuf != NULL) {
+        free(valBuf);
+    }
+
+    return res;
 }
 
 EcoRes EcoHdrTab_Drop(EcoHdrTab *tab, const char *key) {
