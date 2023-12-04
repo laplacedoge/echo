@@ -1,21 +1,30 @@
-
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <getopt.h>
+#include <fcntl.h>
 #include <stdio.h>
 
 #include "echo.h"
 
 static bool gHelpNeeded = false;
 
-static char *gOutputFile = NULL;
+static char *gOutputFilePath = "trophy";
 
 static FILE *gLogFileStm = NULL;
 
 static EcoHdrTab *gReqHdrTab = NULL;
+
+static int gUrlArgIdx = -1;
+
+static int gUrlArgNum = 0;
 
 #define EOL "\n"
 
@@ -29,8 +38,7 @@ static EcoHdrTab *gReqHdrTab = NULL;
                 VERSION_MINOR "." \
                 VERSION_PATCH
 
-#define HELP    EOL \
-                "Loot " VERSION ", a tiny HTTP(S) client." EOL \
+#define HELP    "Loot " VERSION ", a tiny HTTP(S) client." EOL \
                 EOL \
                 "Usage: loot [OPTIONS] <url>" EOL \
                 EOL \
@@ -60,38 +68,6 @@ static int InitParam(void) {
     return 0;
 }
 
-static int AppendHeader(char *header) {
-    char *data = NULL;
-    char *colon;
-    EcoRes res;
-
-    data = strdup(header);
-    if (data == NULL) {
-        goto ErrExit;
-    }
-
-    colon = strchr(data, ':');
-    if (colon == NULL) {
-        goto ErrExit;
-    }
-
-    *colon = '\0';
-
-    res = EcoHdrTab_Add(gReqHdrTab, data, colon + 1);
-    if (res != EcoRes_Ok) {
-        goto ErrExit;
-    }
-
-    return 0;
-
-ErrExit:
-    if (data != NULL) {
-        free(data);
-    }
-
-    return -1;
-}
-
 static int ParseParam(int argc, char **argv) {
     int ret;
 
@@ -101,45 +77,86 @@ static int ParseParam(int argc, char **argv) {
         goto ErrExit;
     }
 
-    for (int i = 0; i < argc; i++) {
-        char *arg = argv[i];
+    while (true) {
+        const struct option longOpts[] = {
+            { "help", no_argument, NULL, 'h'},
+            { "output-file", required_argument, NULL, 'o'},
+            { "header", required_argument, NULL, 'H'},
+            { NULL, 0, NULL, 0}
+        };
+        EcoRes res;
+        int optIdx;
+        int ch;
 
-        if (strcmp(arg, "-h") == 0 ||
-            strcmp(arg, "--help") == 0) {
-            gHelpNeeded = true;
-        } else if (strcmp(arg, "-o") == 0 ||
-                   strcmp(arg, "--output-file") == 0) {
-            if (i + 1 < argc) {
-                gOutputFile = argv[i + 1];
-                i = i + 1;
-            } else {
-                Log("Missing argument for option \"%s\"!", arg);
+        opterr = 0;
 
+        ch = getopt_long(argc, argv, "ho:H:", longOpts, &optIdx);
+        if (ch == -1) {
+            break;
+        }
+
+        switch (ch) {
+            case 'h':
+                gHelpNeeded = true;
+
+                break;
+
+            case 'o':
+                gOutputFilePath = optarg;
+
+                break;
+
+            case 'H':
+                res = EcoHdrTab_AddLine(gReqHdrTab, optarg);
+                if (res != EcoRes_Ok) {
+                    const char *reason;
+
+                    switch (res) {
+                    case EcoRes_BadHdrLine:
+                        reason = "Invalid header format";
+                        break;
+
+                    case EcoRes_BadHdrKey:
+                        reason = "Invalid key format";
+                        break;
+
+                    case EcoRes_BadHdrVal:
+                        reason = "Invalid value format";
+                        break;
+
+                    default:
+                        reason = "Unknown error";
+                        break;
+                    }
+
+                    Log("Failed to add header line \"%s\": %s!", optarg, reason);
+                }
+
+                break;
+
+            case '?':
+                Log("Unknown option \"%s\"!", argv[optind - 1]);
+
+                break;
+
+            default:
                 goto ErrExit;
-            }
-        } else if (strcmp(arg, "-H") == 0 ||
-                   strcmp(arg, "--header") == 0) {
-            if (i + 1 >= argc) {
-                Log("Missing argument for option \"%s\"!", arg);
-
-                goto ErrExit;
-            }
-
-            ret = AppendHeader(argv[i + 1]);
-            if (ret != 0) {
-                Log("Failed to append header \"%s\"!", argv[i + 1]);
-
-                goto ErrExit;
-            }
-
-            i++;
         }
     }
+
+    gUrlArgNum = argc - optind;
+    if (gHelpNeeded == false &&
+        gUrlArgNum == 0) {
+        Log("No URL specified!");
+
+        goto ErrExit;
+    }
+
+    gUrlArgIdx = optind;
 
     return 0;
 
 ErrExit:
-    puts(HELP);
 
     return -1;
 }
@@ -165,8 +182,139 @@ static void DeinitParam(void) {
     }
 }
 
-int main(int argc, char **argv) {
+EcoRes LootChanOpenHook(EcoChanAddr *addr, void *arg) {
+    struct sockaddr_in srvAddr;
+    int opt = 1;
+    int sockFd;
     int ret;
+
+    sockFd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sockFd == -1) {
+        return EcoRes_Err;
+    }
+
+    ret = setsockopt(sockFd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
+    if (ret != 0) {
+        close(sockFd);
+
+        return EcoRes_Err;
+    }
+
+    srvAddr.sin_family = AF_INET;
+    srvAddr.sin_port = htons(addr->port);
+    memcpy(&srvAddr.sin_addr, &addr->addr, 4);
+
+    ret = connect(sockFd, (struct sockaddr *)&srvAddr, sizeof(srvAddr));
+    if (ret != 0) {
+        close(sockFd);
+
+        return EcoRes_Err;
+    }
+
+    *(int *)arg = sockFd;
+
+    return EcoRes_Ok;
+}
+
+int LootChanReadHook(void *buf, int len, void *arg) {
+    int sockFd;
+    int ret;
+
+    sockFd = *(int *)arg;
+
+    ret = (int)read(sockFd, buf, (size_t)len);
+    if (ret <= 0) {
+        if (ret == 0) {
+            return EcoRes_ReachEnd;
+        }
+
+        return EcoRes_Err;
+    }
+
+    return ret;
+}
+
+int LootChanWriteHook(const void *buf, int len, void *arg) {
+    int sockFd;
+    int ret;
+
+    sockFd = *(int *)arg;
+
+    ret = (int)write(sockFd, buf, (size_t)len);
+    if (ret <= 0) {
+        if (ret == 0) {
+            return EcoRes_ReachEnd;
+        }
+
+        return EcoRes_Err;
+    }
+
+    return ret;
+}
+
+EcoRes LootChanCloseHook(void *arg) {
+    int sockFd;
+    int ret;
+
+    sockFd = *(int *)arg;
+
+    ret = close(sockFd);
+    if (ret != 0) {
+        return EcoRes_Err;
+    }
+
+    return EcoRes_Ok;
+}
+
+static int SaveToFile(EcoHttpRsp *rsp, const char *path) {
+    ssize_t wrLen;
+    int fd;
+
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) {
+        Log("Failed to open file \"%s\"!", path);
+
+        return -1;
+    }
+
+    wrLen = write(fd, rsp->bodyBuf, rsp->bodyLen);
+    if (wrLen != (ssize_t)rsp->bodyLen) {
+        Log("Failed to write to file \"%s\"!", path);
+
+        close(fd);
+
+        return -1;
+    }
+
+    close(fd);
+
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    EcoHttpReq *req;
+    EcoHttpCli *cli;
+    int socketFd;
+    EcoRes res;
+    int ret;
+
+    req = EcoHttpReq_New();
+    if (req == NULL) {
+        Log("Failed to create request!");
+
+        return EXIT_FAILURE;
+    }
+
+    EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Headers, gReqHdrTab);
+
+    cli = EcoHttpCli_New();
+    if (cli == NULL) {
+        Log("Failed to create client!");
+
+        return EXIT_FAILURE;
+    }
+
+    EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_Request, req);
 
     ret = InitParam();
     if (ret != 0) {
@@ -178,18 +326,57 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    ShowReqHeader();
-
     if (gHelpNeeded) {
         puts(HELP);
 
         return EXIT_SUCCESS;
     }
 
+    ShowReqHeader();
+
+    EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanHookArg, &socketFd);
+    EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanOpenHook, LootChanOpenHook);
+    EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanCloseHook, LootChanCloseHook);
+    EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanReadHook, LootChanReadHook);
+    EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanWriteHook, LootChanWriteHook);
+
+    EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Verion, (EcoArg)EcoHttpVer_1_1);
+    EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Method, (EcoArg)EcoHttpMeth_Get);
+
+    if (gUrlArgNum != 0) {
+        for (int i = gUrlArgIdx; i < argc; i++) {
+            res = EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Url, argv[i]);
+            if (res != EcoRes_Ok) {
+                Log("Failed to set URL \"%s\": %s.", argv[i], EcoRes_ToStr(res));
+
+                continue;
+            }
+
+            Log("Issuing URL \"%s\"...", argv[i]);
+
+            res = EcoHttpCli_Issue(cli);
+            if (res != EcoRes_Ok) {
+                Log("    Failed to issue URL \"%s\": %s.", argv[i], EcoRes_ToStr(res));
+
+                continue;
+            }
+
+            Log("    Done!");
+
+            Log("Saving to \"%s\"...", gOutputFilePath);
+
+            ret = SaveToFile(cli->rsp, gOutputFilePath);
+            if (ret != 0) {
+                Log("    Failed to save to \"%s\"!", gOutputFilePath);
+
+                continue;
+            }
+
+            Log("    Done!");
+        }
+    }
+
+    EcoHttpCli_Del(cli);
+
     DeinitParam();
 }
-
-
-
-
-
