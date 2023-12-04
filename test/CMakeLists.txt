@@ -5,6 +5,7 @@ link_libraries(echo)
 add_executable(testing
     test.c
     basic_header.c
+    basic_request.c
 )
 
 add_custom_target(run_testing
