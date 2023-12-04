@@ -594,6 +594,7 @@ EcoRes EcoHdrTab_Find(EcoHdrTab *tab, const char *key, EcoKvp **kvp) {
 }
 
 void EcoHttpReq_Init(EcoHttpReq *req) {
+    req->scheme = ECO_CONF_DEF_SCHEME;
     req->meth = ECO_CONF_DEF_HTTP_METH;
     req->pathBuf = NULL;
     req->pathLen = 0;
@@ -1113,7 +1114,6 @@ static EcoRes EcoHttpReq_SetOpt_Url(EcoHttpReq *req, const char *url) {
     EcoUrlParCac *cache;
     char *pathBuf;
     char *queryBuf;
-    bool isHttps;
     EcoRes res;
 
     /* Create URL parsing cache. */
@@ -1131,15 +1131,19 @@ static EcoRes EcoHttpReq_SetOpt_Url(EcoHttpReq *req, const char *url) {
     /* Check scheme. */
     if (cache->schemeSet) {
         if (strcmp(cache->schemeBuf, "http") == 0) {
-            isHttps = false;
+            req->scheme = EcoScheme_Http;
         } else if (strcmp(cache->schemeBuf, "https") == 0) {
-            isHttps = true;
+            req->scheme = EcoScheme_Https;
         } else {
             res = EcoRes_BadScheme;
             goto Finally;
         }
     } else {
-        isHttps = false;
+        if (ECO_CONF_DEF_SCHEME == EcoScheme_Https) {
+            req->scheme = EcoScheme_Https;
+        } else {
+            req->scheme = EcoScheme_Http;
+        }
     }
 
     /* Copy path and query string. */
@@ -1173,7 +1177,7 @@ static EcoRes EcoHttpReq_SetOpt_Url(EcoHttpReq *req, const char *url) {
     if (cache->portSet) {
         addr->port = (uint16_t)cache->port;
     } else {
-        if (isHttps) {
+        if (req->scheme == EcoScheme_Https) {
             addr->port = ECO_CONF_DEF_HTTPS_PORT;
         } else {
             addr->port = ECO_CONF_DEF_HTTP_PORT;
@@ -1292,6 +1296,20 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg) {
     EcoRes res;
 
     switch (opt) {
+    case EcoHttpReqOpt_Scheme:
+        switch ((size_t)arg) {
+        case EcoScheme_Http:
+        case EcoScheme_Https:
+            break;
+
+        default:
+            return EcoRes_BadScheme;
+        }
+
+        req->scheme = (EcoScheme)(size_t)arg;
+
+        break;
+
     case EcoHttpReqOpt_Url:
         res = EcoHttpReq_SetOpt_Url(req, (char *)arg);
         if (res != EcoRes_Ok) {

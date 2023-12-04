@@ -12,6 +12,9 @@
 /* Default HTTP IP address. */
 #define ECO_CONF_DEF_IP_ADDR        ((uint8_t [4]){ 127, 0, 0, 1 })
 
+/* Default scheme. */
+#define ECO_CONF_DEF_SCHEME         EcoScheme_Http
+
 /* Default HTTP port. */
 #define ECO_CONF_DEF_HTTP_PORT      80
 

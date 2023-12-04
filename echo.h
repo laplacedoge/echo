@@ -75,6 +75,13 @@ typedef enum _EcoRes {
     EcoRes_NoReq,
 } EcoRes;
 
+typedef enum _EcoScheme {
+    EcoScheme_Unknown = -1,
+
+    EcoScheme_Http,
+    EcoScheme_Https,
+} EcoScheme;
+
 typedef enum _EcoHttpVer {
     EcoHttpVer_Unknown = -1,
 
@@ -91,6 +98,7 @@ typedef enum _EcoHttpMeth {
 } EcoHttpMeth;
 
 typedef enum _EcoHttpReqOpt {
+    EcoHttpReqOpt_Scheme,
     EcoHttpReqOpt_Url,
     EcoHttpReqOpt_Host,
     EcoHttpReqOpt_Port,
@@ -158,8 +166,8 @@ typedef struct _EcoChanAddr {
 } EcoChanAddr;
 
 typedef struct _EcoHttpReq {
+    EcoScheme scheme;
     EcoHttpMeth meth;
-
     EcoChanAddr chanAddr;
 
     char *pathBuf;
