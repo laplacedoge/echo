@@ -89,6 +89,48 @@ TEST AddCommonHeaderSeparately(void) {
     PASS();
 }
 
+TEST AddCommonFormattedHeaderSeparately(void) {
+    EcoHdrTab *tab;
+    EcoRes res;
+
+    tab = EcoHdrTab_New();
+    ASSERT_NEQ(NULL, tab);
+
+    res = EcoHdrTab_AddFmt(tab, "Accept", "%s/%s", "application", "json");
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+    ASSERT_EQ_FMT(1UL, tab->kvpNum, "%zu");
+    ASSERT_STR_EQ("accept", tab->kvpAry[0].keyBuf);
+    ASSERT_STR_EQ("application/json", tab->kvpAry[0].valBuf);
+
+    res = EcoHdrTab_AddFmt(tab, "Accept", "%s/%s", "text", "html");
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+    ASSERT_EQ_FMT(1UL, tab->kvpNum, "%zu");
+    ASSERT_STR_EQ("accept", tab->kvpAry[0].keyBuf);
+    ASSERT_STR_EQ("text/html", tab->kvpAry[0].valBuf);
+
+    res = EcoHdrTab_AddFmt(tab, "Accept", "%s/%s", "image", "png");
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+    ASSERT_EQ_FMT(1UL, tab->kvpNum, "%zu");
+    ASSERT_STR_EQ("accept", tab->kvpAry[0].keyBuf);
+    ASSERT_STR_EQ("image/png", tab->kvpAry[0].valBuf);
+
+    res = EcoHdrTab_AddFmt(tab, "Content-Length", "%d", 1024);
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+    ASSERT_EQ_FMT(2UL, tab->kvpNum, "%zu");
+    ASSERT_STR_EQ("content-length", tab->kvpAry[1].keyBuf);
+    ASSERT_STR_EQ("1024", tab->kvpAry[1].valBuf);
+
+    res = EcoHdrTab_AddFmt(tab, "Range", "bytes=%d-%d", 0, 1023);
+    ASSERT_EQ_FMT(EcoRes_Ok, res, "%d");
+    ASSERT_EQ_FMT(3UL, tab->kvpNum, "%zu");
+    ASSERT_STR_EQ("range", tab->kvpAry[2].keyBuf);
+    ASSERT_STR_EQ("bytes=0-1023", tab->kvpAry[2].valBuf);
+
+    EcoHdrTab_Del(tab);
+
+    PASS();
+}
+
 TEST AddWeirdHeaderSeparately(void) {
     EcoHdrTab *tab;
     EcoRes res;
@@ -340,6 +382,7 @@ TEST AddInvalidHeaderLine(void) {
 
 SUITE(BasicHeaderSuite) {
     RUN_TEST(AddCommonHeaderSeparately);
+    RUN_TEST(AddCommonFormattedHeaderSeparately);
     RUN_TEST(AddWeirdHeaderSeparately);
     RUN_TEST(AddInvalidHeaderKeySeparately);
     RUN_TEST(AddInvalidHeaderValueSeparately);
