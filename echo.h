@@ -106,7 +106,7 @@ typedef enum _EcoHttpReqOpt {
     EcoHttpReqOpt_Path,
     EcoHttpReqOpt_Query,
     EcoHttpReqOpt_Method,
-    EcoHttpReqOpt_Verion,
+    EcoHttpReqOpt_Version,
     EcoHttpReqOpt_Headers,
     EcoHttpReqOpt_BodyBuf,
     EcoHttpReqOpt_BodyLen,

@@ -1410,7 +1410,7 @@ EcoRes EcoHttpReq_SetOpt(EcoHttpReq *req, EcoHttpReqOpt opt, EcoArg arg) {
         req->meth = (EcoHttpMeth)(size_t)arg;
         break;
 
-    case EcoHttpReqOpt_Verion:
+    case EcoHttpReqOpt_Version:
         req->ver = (EcoHttpVer)(size_t)arg;
         break;
 

@@ -340,7 +340,7 @@ int main(int argc, char **argv) {
     EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanReadHook, LootChanReadHook);
     EcoHttpCli_SetOpt(cli, EcoHttpCliOpt_ChanWriteHook, LootChanWriteHook);
 
-    EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Verion, (EcoArg)EcoHttpVer_1_1);
+    EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Version, (EcoArg)EcoHttpVer_1_1);
     EcoHttpReq_SetOpt(req, EcoHttpReqOpt_Method, (EcoArg)EcoHttpMeth_Get);
 
     if (gUrlArgNum != 0) {
