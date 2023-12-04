@@ -751,6 +751,7 @@ EcoRes EcoUrlParCac_ParseUrl(EcoUrlParCac *cache, const char *url) {
         case FsmStat_Scheme1stCh:
             if ((ch >= 'a' && ch <= 'z') ||
                 (ch >= 'A' && ch <= 'Z')) {
+                cache->schemeSet = true;
                 cache->schemeBuf[0] = ch;
                 cache->schemeLen = 1;
 
